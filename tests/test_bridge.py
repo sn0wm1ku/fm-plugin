@@ -16,6 +16,18 @@ bridge = runpy.run_path(str(BRIDGE))
 MANIFEST = {"tools": [{"name": "lookup_host_inventory", "description": "Look up the current private inventory stock for a product code.",
     "inputSchema": {"type": "object", "properties": {"code": {"type": "string", "description": "The product code"}},
                     "required": ["code"], "additionalProperties": False}}]}
+CLAUDE_TOOLS = {"tools": [
+    {"name": "WebSearch", "description": "Search the web.", "inputSchema": {
+        "type": "object", "properties": {
+            "query": {"type": "string", "minLength": 2},
+            "allowed_domains": {"type": "array", "items": {"type": "string"}},
+            "blocked_domains": {"type": "array", "items": {"type": "string"}}},
+        "required": ["query"], "additionalProperties": False}},
+    {"name": "WebFetch", "description": "Fetch a web page.", "inputSchema": {
+        "type": "object", "properties": {
+            "url": {"type": "string", "format": "uri"}, "prompt": {"type": "string"}},
+        "required": ["url", "prompt"], "additionalProperties": False}},
+]}
 
 
 def rejected(action):
@@ -38,7 +50,9 @@ async def pending(session):
 async def offline():
     for schema in (
         {"type": "object", "properties": {}, "additionalProperties": True},
-        {"type": "object", "properties": {"code": {"type": "string", "minLength": 1}}, "additionalProperties": False},
+        {"type": "object", "properties": {"code": {"type": "string", "minLength": -1}}, "additionalProperties": False},
+        {"type": "object", "properties": {"code": {"type": "string", "minLength": True}}, "additionalProperties": False},
+        {"type": "object", "properties": {"code": {"type": "string", "format": "unknown"}}, "additionalProperties": False},
         {"type": "object", "properties": {"code": {"anyOf": [{"type": "string"}]}}, "additionalProperties": False},
         {"type": "object", "properties": {}, "required": ["missing"], "additionalProperties": False},
     ):
@@ -48,6 +62,35 @@ async def offline():
     assert bridge["normalize"](schema, {"label": "a", "count": None}) == {"label": "a"}
     rejected(lambda: bridge["normalize"](schema, {"label": "c"}))
     rejected(lambda: bridge["normalize"](schema, {"label": "a", "count": True}))
+
+    session = bridge["create_session"](CLAUDE_TOOLS)
+    try:
+        invalid = [("WebSearch", {"query": "x"})] + [
+            ("WebFetch", {"url": url, "prompt": "Read this page"}) for url in (
+                "/weather", "https://", "https://example.com/a b", "https://example.com/\nweather",
+                "https://example.com/%ZZ", "https://example.com:bad/", "https://[invalid]/",
+                "https://example.com/path[bad]", "https://example.com/#two#fragments")]
+        for index, (name, arguments) in enumerate(invalid):
+            result = await bridge["exchange"](session, name, arguments, 1)
+            assert not result["ok"] and result["errors"][0]["type"] == "BridgeError", result
+            assert len(bridge["session_errors"](session)) == index + 1
+            assert not list(session.glob("*.request.json")), arguments
+        for name, arguments, expected in (
+            ("WebSearch", {"query": "HK", "allowed_domains": None, "blocked_domains": None}, {"query": "HK"}),
+            ("WebFetch", {"url": "https://example.com/weather?q=Hong%20Kong", "prompt": "Read this page"},
+             {"url": "https://example.com/weather?q=Hong%20Kong", "prompt": "Read this page"}),
+        ):
+            task = asyncio.create_task(bridge["exchange"](session, name, arguments, 3))
+            request = await pending(session)
+            assert request["name"] == name and request["arguments"] == expected, request
+            bridge["reply"](session, request["id"], {"ok": True, "result": "Host result"})
+            assert (await task)["ok"]
+        uri = {"type": "string", "format": "uri"}
+        assert bridge["normalize"](uri, "mailto:person@example.com") == "mailto:person@example.com"
+        assert "at least 2 characters" in bridge["native_description"]({"type": "string", "minLength": 2})
+        assert "absolute URI" in bridge["native_description"](uri)
+    finally:
+        bridge["close_session"](session)
 
     session = bridge["create_session"](MANIFEST)
     try:
@@ -119,6 +162,9 @@ async def offline():
 
 async def live():
     import apple_fm_sdk as fm
+    for definition in bridge["definitions"](CLAUDE_TOOLS):
+        native = bridge["native_type"](fm, definition["inputSchema"], definition["name"] + "Arguments").generation_schema().to_dict()
+        assert "at least 2 characters" in json.dumps(native) if definition["name"] == "WebSearch" else "absolute URI" in json.dumps(native), native
     session = bridge["create_session"](MANIFEST)
     try:
         tools = bridge["create_tools"](fm, session, 40)

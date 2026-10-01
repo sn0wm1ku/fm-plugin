@@ -107,6 +107,11 @@ Or inside Claude Code:
 Start a new session after installation. The same `ask` skill handles setup and
 requests in both clients; no separate setup skill is required.
 
+Keep one active installation of `fm` per client. When migrating from the local
+development marketplace `fm-local` to GitHub's `apple-fm`, disable the old copy
+so `/fm:ask` resolves to the intended version. Check `claude plugin list --json`
+for its version and installation path.
+
 ## Use in a chat
 
 In Claude Code:
