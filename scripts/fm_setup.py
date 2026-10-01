@@ -17,6 +17,7 @@ import tempfile
 
 
 SDK_VERSION = "0.2.1"
+MCP_VERSION = "2.2.0"
 
 
 def receipt_path():
@@ -85,6 +86,16 @@ def prerequisite_check():
             available, detail = False, str(error)
         record("model", bool(available), detail,
                {"message": "Enable Apple Intelligence in System Settings and wait for model downloads. Recheck Xcode setup if initialization failed."})
+    try:
+        importlib.import_module("mcp.server")
+        mcp_version = importlib.metadata.version("mcp")
+        record("mcp", mcp_version == MCP_VERSION, mcp_version,
+               {"message": "With your permission, install the tested MCP bridge dependency using this interpreter.",
+                "argv": [sys.executable, "-m", "pip", "install", "mcp==" + MCP_VERSION]})
+    except (ImportError, OSError) as error:
+        record("mcp", False, str(error),
+               {"message": "With your permission, install the MCP SDK so the plugin can expose its bridge tools.",
+                "argv": [sys.executable, "-m", "pip", "install", "mcp==" + MCP_VERSION]})
     native = shutil.which("fm")
     record("fm_cli", native is not None, native or "not found",
            {"message": "Make Apple's Foundation Models CLI available on PATH, then rerun checks. On this plugin's tested macOS release it is /usr/bin/fm."})
@@ -148,6 +159,8 @@ def check_installation():
         return failure("SetupRequired", "Run setup terms and obtain the user's explicit agreement before setup accept.")
     if not isinstance(receipt, dict) or receipt.get("terms_sha256") != current["sha256"] or receipt.get("decision") != "agree":
         return failure("SetupRequired", "Current terms require the user's explicit agreement. Run setup terms again.")
+    if receipt.get("python") != sys.executable:
+        save_receipt({**receipt, "python": sys.executable})
     return {"ok": True, "ready": True, "checks": checked["checks"], "receipt": str(receipt_path())}
 
 
