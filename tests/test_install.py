@@ -1,6 +1,9 @@
 """The setup gate must prevent package copies and extension execution."""
 from pathlib import Path
+import json
+import shutil
 import sys
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -40,13 +43,33 @@ def checks():
         run.return_value = SimpleNamespace(returncode=1, stdout="", stderr="Copy failed")
         assert not install.install("codex", "fm@apple-fm", Path("."))["ok"]
         assert run.call_count == 1
-    listing = SimpleNamespace(returncode=0, stdout='[{"id":"fm@fm-local","scope":"user"}]', stderr="")
-    with patch.object(install, "check_installation", return_value={"ok": True}), \
-            patch.object(install.shutil, "which", return_value="claude"), \
-            patch.object(install.subprocess, "run", side_effect=[listing, success, success]) as run:
-        assert install.install("claude", "fm@fm-local", Path("."))["ok"]
-        assert run.call_args.args[0] == ["claude", "plugin", "update", "fm@fm-local", "--scope", "user", "--json"]
-        assert run.call_args_list[1].args[0] == ["claude", "plugin", "marketplace", "add", "."]
+    with tempfile.TemporaryDirectory() as directory:
+        root, cache = Path(directory) / "source", Path(directory) / "cache"
+        (root / ".claude-plugin").mkdir(parents=True)
+        (root / "scripts").mkdir()
+        (root / ".claude-plugin" / "plugin.json").write_text('{"version":"0.7.0"}')
+        (root / "scripts" / "runtime.py").write_text("print('current')")
+        shutil.copytree(root, cache)
+        entry = {"id": "fm@fm-local", "scope": "user", "version": "0.7.0", "installPath": str(cache)}
+        listing = SimpleNamespace(returncode=0, stdout=json.dumps([entry]), stderr="")
+        with patch.object(install, "check_installation", return_value={"ok": True}), \
+                patch.object(install.shutil, "which", return_value="claude"), \
+                patch.object(install.subprocess, "run", side_effect=[listing, success, success, listing]) as run:
+            assert install.install("claude", "fm@fm-local", root)["ok"]
+            assert run.call_args_list[2].args[0] == ["claude", "plugin", "update", "fm@fm-local", "--scope", "user", "--json"]
+            assert run.call_args_list[1].args[0] == ["claude", "plugin", "marketplace", "add", str(root)]
+        old = SimpleNamespace(returncode=0, stdout=json.dumps([{**entry, "version": "0.6.1"}]), stderr="")
+        with patch.object(install, "check_installation", return_value={"ok": True}), \
+                patch.object(install.shutil, "which", return_value="claude"), \
+                patch.object(install.subprocess, "run", side_effect=[listing, success, success, old]):
+            result = install.install("claude", "fm@fm-local", root)
+            assert not result["ok"] and result["errors"][0]["type"] == "InstallationVerificationFailed"
+        (cache / "scripts" / "runtime.py").write_text("print('stale')")
+        with patch.object(install.subprocess, "run", return_value=listing):
+            assert not install.verify_claude("claude", "fm@fm-local", root)["ok"]
+        shutil.rmtree(cache)
+        with patch.object(install.subprocess, "run", return_value=listing):
+            assert not install.verify_claude("claude", "fm@fm-local", root)["ok"]
     with patch.object(sys, "argv", ["fm_sdk.py", "respond", "hello", "--bridge", "session", "--stream"]), \
             patch.object(fm_bridge, "close_session") as close, patch.object(fm_sdk, "emit"):
         assert fm_sdk.main() == 2

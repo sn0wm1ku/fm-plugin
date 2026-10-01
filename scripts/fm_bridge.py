@@ -50,12 +50,16 @@ def check_schema(schema, root=True):
     if not isinstance(schema, dict):
         raise ValueError("Each inputSchema must be a JSON object")
     kind = schema.get("type")
-    allowed = {"type", "description", "title"}
+    allowed = {"type", "description", "title"} | ({"$schema"} if root else set())
     allowed |= {"properties", "required", "additionalProperties"} if kind == "object" else {"items"} if kind == "array" else {"enum", "minLength", "format"} if kind == "string" else set()
+    if kind in ("number", "integer"):
+        allowed |= {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"}
     if kind not in ("object", "array", "string", "number", "integer", "boolean") or set(schema) - allowed:
         raise ValueError("Unsupported bridge schema type or keyword: " + str(kind) + " " + str(sorted(set(schema) - allowed)))
     if root and kind != "object":
         raise ValueError("Tool inputSchema must describe an object")
+    if "$schema" in schema and schema["$schema"] != "https://json-schema.org/draft/2020-12/schema":
+        raise ValueError("Only the root JSON Schema 2020-12 declaration is supported")
     if any(not isinstance(schema[key], str) for key in ("description", "title") if key in schema):
         raise ValueError("Schema title and description must be strings")
     if kind == "object":
@@ -76,6 +80,9 @@ def check_schema(schema, root=True):
         raise ValueError("minLength must be a non-negative integer")
     if "format" in schema and schema["format"] != "uri":
         raise ValueError("Only the uri string format is supported")
+    for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"):
+        if key in schema and not (type(schema[key]) is int or type(schema[key]) is float and math.isfinite(schema[key])):
+            raise ValueError(key + " must be a finite number, not a boolean")
 
 
 def definitions(manifest):
@@ -135,7 +142,7 @@ def normalize(schema, value):
             raise ValueError("Expected array tool argument")
         return [normalize(schema["items"], item) for item in value]
     valid = (isinstance(value, str) if kind == "string" else type(value) is bool if kind == "boolean" else
-             type(value) is int if kind == "integer" else type(value) in (int, float) and math.isfinite(value))
+             type(value) is int if kind == "integer" else type(value) is int or type(value) is float and math.isfinite(value))
     if not valid or "enum" in schema and value not in schema["enum"]:
         raise ValueError("Tool argument violates type or enum")
     if kind == "string":
@@ -143,6 +150,12 @@ def normalize(schema, value):
             raise ValueError("Tool argument violates minLength")
         if schema.get("format") == "uri":
             validate_uri(value)
+    if kind in ("number", "integer") and (
+            "minimum" in schema and value < schema["minimum"] or
+            "maximum" in schema and value > schema["maximum"] or
+            "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"] or
+            "exclusiveMaximum" in schema and value >= schema["exclusiveMaximum"]):
+        raise ValueError("Tool argument violates numeric bounds")
     return value
 
 
@@ -167,6 +180,13 @@ def native_description(schema):
         guidance.append("Use at least " + str(schema["minLength"]) + " characters.")
     if schema.get("format") == "uri":
         guidance.append("Use a well-formed absolute URI, including its scheme.")
+    for key, operator in (("minimum", ">="), ("maximum", "<="), ("exclusiveMinimum", ">"), ("exclusiveMaximum", "<")):
+        if key in schema:
+            guidance.append("Use a value " + operator + " " + str(schema[key]) + ".")
+    if schema.get("type") == "array":
+        item_guidance = native_description(schema["items"])
+        if item_guidance:
+            guidance.append("Each array item: " + item_guidance)
     return " ".join(part for part in guidance if part) or None
 
 

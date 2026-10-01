@@ -1,57 +1,208 @@
 # Custom tools for fm
 
 Tools let the on-device model request a bounded lookup, calculation, or API call.
-Use a Python extension for local implementations, or the host relay for selected
-tools already available to Codex or Claude Code. Complete the [setup and terms
+Use a programmatic host driver to lend existing host tools, script callbacks for
+executable clients, or a Python extension for local implementations. Complete the [setup and terms
 gate](../README.md#set-up-and-install) first; it also runs at runtime before
 extensions are loaded or a bridge is created.
 
 For weather, news, prices, or private records, the host assistant must first
-decide which source data are missing. Discover the relevant tools and create the
-relay before asking fm to answer. For weather, use an available weather tool or
+decide which source data are missing. Discover the relevant tools and wire their
+callbacks before asking fm to answer. For weather, use an available weather tool or
 web search/fetch capability; preserve location, observation time, units, and
 source URLs in the returned result. A plain offline response saying it cannot
 access live data means the handoff was not completed.
 
 ## Callable MCP bridge
 
-The host LLM owns context preparation and tool handling. Prepare a self-contained
-task from the relevant conversation and authorized source material; include facts,
-constraints and output requirements explicitly. Supply this context and the
-selected tool definitions together when calling `fm_start` for each execution.
-The host then executes requested tools, returns their real results, and verifies
-FM's answer against the original task.
+Prepare a self-contained task from the relevant conversation and authorized
+sources. Include facts, constraints, and output requirements. Then bind the
+selected **real host tool callbacks** to [`scripts/fm_host.js`](../scripts/fm_host.js).
+The driver handles the complete callback loop in program code:
 
-Installing the plugin registers `fm_start`, `fm_continue`, and `fm_cancel` in
-both Codex and Claude Code. The clients may prefix those names with the server
-or plugin namespace. Their tool descriptions explain the host's responsibility
-to supply tools before starting FM.
+```text
+Apple FM ↔ programmatic driver ↔ existing host tool callbacks
+```
 
-1. Discover the actual host tool and inspect its definition. Select only the
-   operations authorized for this task. If its name needs a short alias, retain
-   the alias-to-callable mapping in the host's context.
-2. Call `fm_start` with `prompt` and `tools`, an array of
-   `{name, description, inputSchema}` objects. The schemas follow the same
-   [supported subset](#use-tools-already-available-to-the-host) as the file relay.
-   Use `tools: []` explicitly when all source information is already in the prompt.
-3. The bridge returns a session ID and either model progress, pending tool
-   requests, or a final result. For each pending request, verify the requested
-   name, arguments, deadline, and scope, then call the real host tool once.
-4. Send its result to `fm_continue` with the session ID and
-   `replies: [{"request_id":"<returned-id>","response":{"ok":true,"result":...}}]`.
-   A failed or denied host call uses `response` with `ok: false` and
-   `errors: [{"type":"ToolFailed","message":"actual error"}]`. Poll with
-   `replies: []` while running. Continue until the bridge reports completion or
-   failure, then inspect the answer and returned tool-use evidence.
-5. Call `fm_cancel` when abandoning a task. It stops inference and cleans up
-   its private files; host actions already executed remain the host's responsibility.
+Use the reviewed installed driver. Load its source through an available host
+file/exec tool **inside the program**, storing the returned text in a variable;
+do not print the source into the LLM context on every run. It is an async function
+expression, evaluated once in a programmable runtime that can call the actual
+selected tools. Codex's `functions.exec` exposes callable tools
+on `tools`; use their discovered names and schemas, including plugin namespaces.
+The driver needs `start`, `resume`, and `cancel` bound to the installed
+`fm_start`, `fm_continue`, and `fm_cancel` tools. Each selected tool also needs a
+`call` function bound to its original host callable. Keep these references inside
+the program runtime rather than sending function source to FM.
 
-For example, Claude can give FM its available WebFetch definition. FM returns
-a URL and fetch prompt; Claude invokes WebFetch, then returns its real output
-through `fm_continue`. Codex follows the same protocol with a selected tool
-available in its own session. The plugin manages the subprocess and relay files,
-so neither host needs to write a manifest or run background shell commands for
-this workflow. Credentials and tool implementations remain in the host.
+This example uses bindings discovered in the current host session:
+
+```js
+const runFM = eval("(" + reviewedDriverSource + ")");
+const answer = await runFM({
+  start: startFM,       // actual installed fm_start callable
+  resume: continueFM,   // actual installed fm_continue callable
+  cancel: cancelFM,     // actual installed fm_cancel callable
+  prompt: "Use the current_utc_time tool and report its returned UTC time.",
+  tools: [{
+    name: "current_utc_time",
+    description: "Return the current UTC time from the host clock.",
+    inputSchema: {
+      type: "object", properties: {}, required: [], additionalProperties: false
+    },
+    call: args => hostClock(args) // the original authorized tool, not an LLM call
+  }],
+  timeout_seconds: 120
+});
+text(answer); // emit the completed result, not each request or poll
+```
+
+`reviewedDriverSource` is the source text returned by the program's file/exec
+tool call; `startFM`, `continueFM`, `cancelFM`, and `hostClock` reference actual
+discovered host callables. This wiring reuses their implementations; it does
+not require the user to write another clock, connector, or API client.
+
+Evaluate only the reviewed installed driver source, never FM output. The driver
+registers tool schemas, dispatches requests through the supplied callbacks, and
+feeds their actual results back to FM. The host LLM runs the program once and
+verifies the final answer. The returned `tool_calls` lists tool names and status;
+full tool payloads stay inside the callback loop. Callback wrappers should preserve real errors and
+source metadata, bound returned data, and enforce the authorized resource scope.
+Use the [supported schema subset](#use-tools-already-available-to-the-host).
+The driver's `timeout_seconds` is an integer from 5 to 300. Callbacks may accept
+an `AbortSignal` as their second argument; cancellation cannot stop a host tool
+that ignores it, so give external operations their own deadlines.
+
+Codex's original tool permission checks still apply. Operations needing fresh
+approval must stop for that approval. A standalone shell process instead needs
+a programmatically reachable endpoint; use the Claude shim below for its native
+tools. Report an observed connection limitation rather than silently reverting
+to LLM-driven polling.
+
+### Claude Code: lend its tools through a program shim
+
+[`scripts/fm_claude.py`](../scripts/fm_claude.py) uses Claude Code's own
+[`claude mcp serve`](https://code.claude.com/docs/en/mcp#use-claude-code-as-an-mcp-server)
+to dispatch native tool callbacks directly, without a Claude model turn. Tools
+that internally use models retain their own costs. For tools from
+an already configured MCP server, supply its reviewed configuration with
+`--config`. The shim loads the server's actual tool schemas, exposes only the
+selected `--tools` to FM, and automatically executes and returns every callback.
+The host LLM supplies context and scope once and receives the completed result.
+
+The MCP client is responsible for confirmations: it does **not** inherit
+Claude's interactive approval prompts. Every selected `server:tool` needs an
+argument-scope JSON Schema in the required `--policy` file. Prepare that policy
+from the user's authorization, using exact allowed resources and operations.
+The shim validates FM's arguments against both the server schema and this policy
+before dispatch. Selecting a tool is not approval for every action it can take.
+
+Use `--prompt-file` for the prepared UTF-8 task and optional
+`--instructions-file` for output constraints. `--timeout` is 5–300 seconds.
+Without `--config`, the server name is `claude` and the shim starts
+`claude mcp serve`. With `--config`, use the actual names from its `mcpServers`
+map and the tools those servers advertise. Keep credentials in the reviewed
+configuration/environment; never include them in the FM prompt or results.
+
+For a read of one approved file, save this scope as `policy.json`, replacing the
+path with the exact authorized file. The required `limit` bounds each read:
+
+```json
+{
+  "claude:Read": {
+    "type": "object",
+    "properties": {
+      "file_path": {"const": "/absolute/approved/file"},
+      "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+      "offset": {"const": 1},
+      "pages": {"enum": ["", "1"]}
+    },
+    "required": ["file_path", "limit"],
+    "additionalProperties": false
+  }
+}
+```
+
+For this text-file example, ask FM to call `Read` with the fixed file path,
+`limit: 8`, `offset: 1`, and `pages: "1"`, then report the first heading.
+Write the task and expected output to `task.txt`, then run once with the approved
+Python interpreter (shown as `python3`):
+
+```sh
+python3 scripts/fm_claude.py --tools claude:Read --policy policy.json --prompt-file task.txt --timeout 120
+```
+
+The callback calls Claude's actual `Read` tool. File content goes back to FM
+inside the program loop; the host receives the final answer and compact tool
+call metadata. Policies apply to arguments, so select a read path whose resolved
+target is authorized and review any server-side behavior that changes scope.
+
+### Script callbacks with `fm_run`
+
+For an already authorized API/MCP client or local operation accessible from a
+script, `fm_run` can own the callback loop in its server process. Supply
+`prompt`, optional `instructions`, `timeout_seconds` (default 120), and `tools`
+entries containing `{name, description, inputSchema, command}`. `command` is a
+fixed argument array with an absolute executable path, for example
+`["/approved/python3", "/absolute/reviewed_lookup.py"]`. Review it before use.
+FM supplies JSON arguments on stdin; it never chooses executable code or argv.
+
+A minimal read-only callback for one authorized catalog item:
+
+```python
+import json
+import sys
+
+def lookup(args):
+    if not isinstance(args, dict) or args != {"code": "FM-DEMO-7"}:
+        return {"ok": False, "errors": [
+            {"type": "OutOfScope", "message": "Only FM-DEMO-7 is authorized."}
+        ]}
+    return {"ok": True, "result": {"code": "FM-DEMO-7", "stock": 37}}
+
+try:
+    arguments = json.load(sys.stdin)
+except (ValueError, OSError) as error:
+    response = {"ok": False, "errors": [
+        {"type": "InvalidInput", "message": str(error)}
+    ]}
+else:
+    response = lookup(arguments)
+print(json.dumps(response))
+```
+
+Register that reviewed script using the actual approved paths:
+
+```json
+{
+  "prompt": "Look up FM-DEMO-7 and report its stock.",
+  "tools": [{
+    "name": "lookup_catalog",
+    "description": "Return stock for the authorized catalog item FM-DEMO-7.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {"code": {"type": "string", "enum": ["FM-DEMO-7"]}},
+      "required": ["code"],
+      "additionalProperties": false
+    },
+    "command": ["/approved/python3", "/absolute/reviewed_lookup.py"]
+  }]
+}
+```
+
+Stdout must contain exactly one JSON response: `{"ok":true,"result":...}` or
+`{"ok":false,"errors":[{"type":"ToolFailed","message":"actual error"}]}`.
+Keep it within 256 KiB; send diagnostics to stderr. The server handles callbacks,
+deadlines, and process cleanup until the final result. The script enforces
+resource authorization and gives external I/O its own deadline. It can call an
+existing authorized MCP/API client directly; invoking a paid LLM to dispatch
+the callback defeats this offloading path.
+
+Use `tools: []` when the prompt already has all necessary information. Both
+automatic routes remove per-callback host LLM turns; overall token or monetary
+savings have not been measured. Inspect the final result and actual tool-use
+status before relying on the answer; inspect a transcript separately when full
+tool-result evidence is needed.
 
 The server uses the setup receipt's Python interpreter and checks prerequisites
 and agreement before generation. Missing dependencies require permission to
@@ -143,13 +294,17 @@ The local model's inference runs on-device; a Python API client can still send
 data over the network according to its implementation.
 
 For email translation, the host can retrieve authorized emails and pass their
-text to fm, or relay selected connector calls as described below. Direct Gmail
-access from Python requires its own authorized client. The host relay keeps
-Codex/Claude Gmail and MCP credentials with their existing host tools.
+text to fm, or lend the existing connector through a programmatic host driver.
+The driver calls the host's original tool with its existing authorization.
+A standalone Python script instead requires a script-accessible authorized
+client; copying a connector's name or schema does not create that connection.
 
 ## Use tools already available to the host
 
-The bridge lets fm request a selected host tool while the host assistant executes
+The following is the **manual compatibility relay**, for an explicitly requested
+host-assisted workflow or debugging. Prefer the programmatic driver above for
+offloading: the manual route involves the host LLM for each callback and polling.
+Here, fm requests a selected host tool while the host assistant executes
 it using its existing authorized connector or tool API. This is a live relay:
 the host must service requests while model generation waits. Python does not
 receive the host's credentials or installed plugin implementation.

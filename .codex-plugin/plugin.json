@@ -1,7 +1,7 @@
 {
   "name": "fm",
-  "version": "0.6.1",
-  "description": "The host LLM prepares context and handles tools. Supply a self-contained task and selected tools to fm_start for each execution, execute FM's tool requests, and return real results with fm_continue. Use fm:ask for setup.",
+  "version": "0.7.0",
+  "description": "Lend existing tools to Apple's on-device model through program callbacks. Prepare context and authorized tool scope once. Codex uses scripts/fm_host.js with actual host callbacks. Claude uses scripts/fm_claude.py with claude mcp serve or selected MCP servers. Scripts feed results to FM without host LLM callback turns. Use fm:ask for setup and permissions.",
   "author": { "name": "sn0wm1ku" },
   "repository": "https://github.com/sn0wm1ku/fm-plugin",
   "license": "MIT",
@@ -9,7 +9,7 @@
   "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
     "displayName": "Apple Foundation Models",
-    "shortDescription": "Run FM with host-prepared context and tools",
-    "defaultPrompt": ["Use fm:ask. Prepare a self-contained task from the relevant conversation and sources, supply that context and selected tools to fm_start, handle tool requests with fm_continue, and verify FM's answer."]
+    "shortDescription": "Lend host tools to FM through program callbacks",
+    "defaultPrompt": ["Use fm:ask. Prepare context and authorized tool scope once. Use scripts/fm_host.js with actual Codex tool callbacks, or scripts/fm_claude.py for Claude MCP tools. Let program code handle every callback and return the completed result. Verify the final answer."]
   }
 }
