@@ -149,6 +149,37 @@ async def live():
         bridge["close_session"](session)
 
 
+async def live_empty():
+    import apple_fm_sdk as fm
+    empty = {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
+    manifest = {"tools": [{"name": "list_host_artifacts", "description": "List the currently attached private host artifacts. This tool takes no arguments.", "inputSchema": empty}]}
+    session = bridge["create_session"](manifest)
+    try:
+        tools = bridge["create_tools"](fm, session, 40)
+        schema = tools[0].arguments_schema.to_dict()
+        assert schema["type"] == "object" and schema["properties"] == {}, schema
+        nested = {"type": "object", "properties": {"options": empty, "groups": {"type": "array", "items": empty}}, "required": ["options", "groups"], "additionalProperties": False}
+        bridge["check_schema"](nested)
+        native = bridge["native_type"](fm, nested, "NestedEmptyArguments").generation_schema().to_dict()
+        assert bridge["normalize"](nested, {"options": {}, "groups": [{}]}) == {"options": {}, "groups": [{}]}
+        assert native["$defs"][native["properties"]["options"]["$ref"].split("/")[-1]]["properties"] == {}, native
+        assert native["$defs"][native["properties"]["groups"]["items"]["$ref"].split("/")[-1]]["properties"] == {}, native
+        model = fm.LanguageModelSession(tools=tools, instructions="Always call list_host_artifacts to answer questions about current attached artifacts. Never guess.")
+        task = asyncio.create_task(model.respond("Call list_host_artifacts now and report the attached artifact name.", options=fm.GenerationOptions(sampling=fm.SamplingMode.greedy())))
+        request = await pending(session)
+        assert request["name"] == "list_host_artifacts" and request["arguments"] == {}, request
+        bridge["reply"](session, request["id"], {"ok": True, "result": {"artifacts": [{"name": "Amber test artifact"}]}})
+        result = await asyncio.wait_for(task, 60)
+        transcript = await model.transcript.to_dict()
+        entries = [entry for entry in transcript["transcript"]["entries"] if entry["role"] == "tool"]
+        assert any(entry["toolName"] == "list_host_artifacts" for entry in entries), transcript
+        assert "Amber test artifact" in result and "Amber test artifact" in json.dumps(entries), (result, entries)
+        assert not bridge["session_errors"](session)
+        print("PASS: no-argument native callback sends {}, returns host result, preserves nested empty schemas")
+    finally:
+        bridge["close_session"](session)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--live", action="store_true")
@@ -156,3 +187,4 @@ if __name__ == "__main__":
     asyncio.run(offline())
     if args.live:
         asyncio.run(live())
+        asyncio.run(live_empty())

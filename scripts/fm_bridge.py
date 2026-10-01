@@ -219,6 +219,11 @@ def native_type(fm, schema, name):
         return list[native_type(fm, schema["items"], name + "Item")]
     if kind != "object":
         return {"string": str, "number": float, "integer": int, "boolean": bool}[kind]
+    if not schema["properties"]:
+        # SDK 0.2.1's decorator rejects empty classes; its native schema accepts
+        # zero properties. Keep the same schema hook for nested empty objects.
+        return type(name, (), {"_generable": True, "generation_schema": classmethod(
+            lambda cls: fm.GenerationSchema(type_class=cls, description=schema.get("description"), properties=[]))})
     annotations = {key: native_type(fm, child, name + key) for key, child in schema["properties"].items()}
     annotations = {key: value if key in schema.get("required", []) else Optional[value] for key, value in annotations.items()}
     fields = {key: fm.guide(child.get("description"), **native_guides(fm, child))
