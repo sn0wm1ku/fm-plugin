@@ -1,6 +1,6 @@
 ---
 name: ask
-description: Sets up and runs bounded tasks with Apple's on-device Foundation Model using the official Python SDK. Use when the user asks to use fm, Apple Foundation Models, or the local Apple model for summarization, rewriting, translation, extraction, classification, images, structured output, batch processing, custom Python tools, selected host tools, or a second opinion.
+description: Run tasks with Apple's on-device Foundation Model (fm). YOU, the host assistant, must supply any tools FM needs. For current facts or private data not provided in the prompt, discover relevant authorized tools in your session, register their schemas through fm_bridge.py, run respond --bridge, and service FM's requests with actual host tool calls. FM receives only the tools you explicitly supply. Read this skill before invoking the helper. Also supports supplied-text translation, summarization, extraction, images, structured output, and batch processing.
 argument-hint: "<task or prompt>"
 ---
 
