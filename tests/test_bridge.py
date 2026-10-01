@@ -27,6 +27,13 @@ CLAUDE_TOOLS = {"tools": [
         "type": "object", "properties": {
             "url": {"type": "string", "format": "uri"}, "prompt": {"type": "string"}},
         "required": ["url", "prompt"], "additionalProperties": False}},
+    {"name": "Read", "description": "Read an authorized file.", "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object", "properties": {
+            "file_path": {"type": "string"},
+            "offset": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+            "limit": {"type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991}},
+        "required": ["file_path"], "additionalProperties": False}},
 ]}
 
 
@@ -63,22 +70,54 @@ async def offline():
     rejected(lambda: bridge["normalize"](schema, {"label": "c"}))
     rejected(lambda: bridge["normalize"](schema, {"label": "a", "count": True}))
 
+    read_schema = CLAUDE_TOOLS["tools"][2]["inputSchema"]
+    bridge["check_schema"](read_schema)
+    for arguments in ({"file_path": "authorized.txt"}, {"file_path": "authorized.txt", "offset": 0, "limit": 1},
+                      {"file_path": "authorized.txt", "offset": 9007199254740991, "limit": 9007199254740991}):
+        assert bridge["normalize"](read_schema, arguments) == arguments
+    for arguments in ({"offset": -1}, {"offset": 9007199254740992}, {"limit": 0},
+                      {"limit": 9007199254740992}, {"limit": True}, {"offset": 0.5}):
+        rejected(lambda: bridge["normalize"](read_schema, {"file_path": "authorized.txt", **arguments}))
+    for declaration in ("https://json-schema.org/draft-07/schema", "https://json-schema.org/draft/2020-12/schema#", True):
+        rejected(lambda: bridge["check_schema"]({**read_schema, "$schema": declaration}))
+    rejected(lambda: bridge["check_schema"]({"type": "object", "properties": {"nested": read_schema}, "additionalProperties": False}))
+    for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"):
+        for bound in (True, False, "0", None, float("inf"), float("-inf"), float("nan")):
+            rejected(lambda: bridge["check_schema"]({"type": "object", "properties": {"count": {"type": "number", key: bound}}, "additionalProperties": False}))
+    nested = {"type": "object", "properties": {"values": {"type": "array", "items": {
+        "type": "number", "minimum": -1, "maximum": 1, "exclusiveMinimum": -0.5, "exclusiveMaximum": 0.5}}},
+        "required": ["values"], "additionalProperties": False}
+    bridge["check_schema"](nested)
+    assert bridge["normalize"](nested, {"values": [-0.49, 0, 0.49]}) == {"values": [-0.49, 0, 0.49]}
+    for value in (-0.5, 0.5, -2, 2, True, float("inf"), float("nan")):
+        rejected(lambda: bridge["normalize"](nested, {"values": [value]}))
+    inclusive = {"type": "number", "minimum": -0.5, "maximum": 0.5}
+    assert bridge["normalize"](inclusive, -0.5) == -0.5
+    assert bridge["normalize"](inclusive, 0.5) == 0.5
+    assert ">= 0" in bridge["native_description"](read_schema["properties"]["offset"])
+    assert "<= 9007199254740991" in bridge["native_description"](read_schema["properties"]["offset"])
+    assert "> 0" in bridge["native_description"](read_schema["properties"]["limit"])
+    assert "Each array item:" in bridge["native_description"](nested["properties"]["values"])
+    assert "< 0.5" in bridge["native_description"](nested["properties"]["values"])
+
     session = bridge["create_session"](CLAUDE_TOOLS)
     try:
-        invalid = [("WebSearch", {"query": "x"})] + [
+        invalid = [("WebSearch", {"query": "x"}), ("Read", {"file_path": "authorized.txt", "limit": 0})] + [
             ("WebFetch", {"url": url, "prompt": "Read this page"}) for url in (
                 "/weather", "https://", "https://example.com/a b", "https://example.com/\nweather",
                 "https://example.com/%ZZ", "https://example.com:bad/", "https://[invalid]/",
                 "https://example.com/path[bad]", "https://example.com/#two#fragments")]
         for index, (name, arguments) in enumerate(invalid):
             result = await bridge["exchange"](session, name, arguments, 1)
-            assert not result["ok"] and result["errors"][0]["type"] == "BridgeError", result
+            assert not result["ok"] and result["errors"][0]["type"] == "BridgeError", (name, arguments, result)
             assert len(bridge["session_errors"](session)) == index + 1
             assert not list(session.glob("*.request.json")), arguments
         for name, arguments, expected in (
             ("WebSearch", {"query": "HK", "allowed_domains": None, "blocked_domains": None}, {"query": "HK"}),
             ("WebFetch", {"url": "https://example.com/weather?q=Hong%20Kong", "prompt": "Read this page"},
              {"url": "https://example.com/weather?q=Hong%20Kong", "prompt": "Read this page"}),
+            ("Read", {"file_path": "authorized.txt", "offset": 0, "limit": 1},
+             {"file_path": "authorized.txt", "offset": 0, "limit": 1}),
         ):
             task = asyncio.create_task(bridge["exchange"](session, name, arguments, 3))
             request = await pending(session)
@@ -164,7 +203,8 @@ async def live():
     import apple_fm_sdk as fm
     for definition in bridge["definitions"](CLAUDE_TOOLS):
         native = bridge["native_type"](fm, definition["inputSchema"], definition["name"] + "Arguments").generation_schema().to_dict()
-        assert "at least 2 characters" in json.dumps(native) if definition["name"] == "WebSearch" else "absolute URI" in json.dumps(native), native
+        expected = {"WebSearch": "at least 2 characters", "WebFetch": "absolute URI", "Read": "<= 9007199254740991"}
+        assert expected[definition["name"]] in json.dumps(native), native
     session = bridge["create_session"](MANIFEST)
     try:
         tools = bridge["create_tools"](fm, session, 40)

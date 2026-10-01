@@ -4,7 +4,7 @@ Use Apple's on-device model from Codex or Claude Code through the official
 [Python SDK](https://apple.github.io/python-apple-fm-sdk/). The shared `ask` skill
 supports text and image inputs, structured output, streaming, saved conversations,
 independent batch requests, token inspection, trusted Python tools, and callable
-MCP bridge tools for selected tools already available to the host assistant.
+MCP tools with a programmatic driver for lending existing host tools.
 
 Both clients load [`skills/ask/SKILL.md`](skills/ask/SKILL.md) and the same
 [`scripts/fm_sdk.py`](scripts/fm_sdk.py) helper. Plugin managers may cache their
@@ -128,24 +128,36 @@ such as dates, prices, and news, verify against a current source.
 
 ## Callable bridge tools
 
-The host LLM prepares the context and handles tools. It assembles the relevant
-conversation, authorized sources, facts, constraints and output requirements
-into a self-contained task, then supplies that context and selected tool
-definitions to `fm_start` for each execution. It executes FM's tool requests,
-returns real results through `fm_continue`, and verifies the final answer.
+The host LLM prepares a self-contained task and binds selected authorized tools
+once. In Codex, [`scripts/fm_host.js`](scripts/fm_host.js) runs inside the host's
+programmable tool runtime and calls its original tools. In Claude Code,
+[`scripts/fm_claude.py`](scripts/fm_claude.py) connects directly to the native
+`claude mcp serve` tools or selected existing MCP servers. Program code feeds
+their results back to FM.
+The host LLM receives the completed result for verification, without taking a
+turn for each callback or progress poll.
+
+```text
+Apple FM ↔ programmatic driver ↔ existing host tool callbacks
+```
+
+Codex's driver uses `functions.exec` and its original tool permission checks.
+Claude's MCP client must enforce the authorized scope itself; it does not inherit
+interactive approval prompts. For script-accessible tools, `fm_run` also
+supports fixed callback commands.
 
 For ordinary text tasks and host tools, the plugin exposes these MCP tools in
 both clients:
 
 | Tool | Host assistant's responsibility |
 | --- | --- |
-| `fm_start` | Supply the prompt and selected tool definitions, or `tools: []` for a self-contained task. |
-| `fm_continue` | Execute FM's pending requests through real host tools and submit their results; poll with empty replies while running. |
-| `fm_cancel` | Stop a task and release its model process and temporary files. |
+| `fm_start`, `fm_continue`, `fm_cancel` | Bind these to the programmatic driver; it starts FM, services requests through the supplied host callbacks, and cleans up. Manual use remains available for explicit compatibility/debugging needs. |
+| `fm_run` | Alternative for script callbacks: supply context and reviewed `{name, description, inputSchema, command}` tools. The call returns after automatic callbacks and inference finish. Use `tools: []` for a self-contained task. |
 
-The bridge manages sessions and relay files. Codex or Claude still selects and
-executes its authorized tools; account access and permissions stay with that
-host. Tool descriptions explain the complete handoff. See the
+The drivers call the original tool implementations within the reviewed scope.
+Script callbacks receive JSON arguments on stdin and return JSON on stdout.
+Both automatic routes avoid host LLM turns for each tool call; total token or
+cost savings have not been measured. See the
 [callable bridge guide](docs/custom-tools.md#callable-mcp-bridge).
 
 The plugin launcher uses the Python interpreter recorded during setup. If that
@@ -241,12 +253,11 @@ factory. At inference time, the helper passes the tool objects to
 `LanguageModelSession`; the SDK runs a tool when the model requests it and returns
 its result to the model. Tool implementations remain local Python code.
 
-For host connectors such as Codex Gmail or Claude Code MCP tools, use the
-[host tool relay](docs/custom-tools.md#use-tools-already-available-to-the-host).
-The host supplies reviewed tool schemas, services requests through its existing
-authorized tool API, and returns results to fm. Credentials and connector
-implementations remain with the host. Direct access from a Python extension
-still requires its own authorized client and credentials.
+For existing host tools, use the [programmatic driver](docs/custom-tools.md#callable-mcp-bridge).
+For script-accessible API/MCP clients, provide a reviewed callback script to
+`fm_run`. The [manual host relay](docs/custom-tools.md#use-tools-already-available-to-the-host)
+remains available for compatibility, but requires host LLM involvement for each
+callback and is not the default offloading path.
 
 ## Apple terms and native CLI use
 
@@ -270,6 +281,9 @@ python3 tests/test_bridge.py
 python3 tests/test_bridge.py --live
 python3 tests/test_mcp.py
 python3 tests/test_mcp.py --live
+node tests/test_host.mjs
+python3 tests/test_claude.py
+python3 tests/test_callbacks.py
 claude plugin validate .
 claude plugin validate skills
 ```

@@ -24,11 +24,14 @@ except ImportError as error:
     raise SystemExit(1)
 
 import fm_bridge as bridge
+import fm_callbacks as callbacks
 
 ToolDefinition = with_config(ConfigDict(extra="forbid", strict=True))(TypedDict("ToolDefinition", {
     "name": str, "description": str, "inputSchema": dict[str, object]}))
 ToolReply = with_config(ConfigDict(extra="forbid", strict=True))(
     TypedDict("ToolReply", {"request_id": str, "response": dict[str, object]}))
+ScriptTool = with_config(ConfigDict(extra="forbid", strict=True))(TypedDict("ScriptTool", {
+    "name": str, "description": str, "inputSchema": dict[str, object], "command": list[str]}))
 
 
 def result(value):
@@ -100,10 +103,11 @@ def create_server():
         except (OSError, ValueError, KeyError, TypeError) as error:
             session["outcome"] = failed("BridgeError", str(error))
         finally:
-            await stop_process(process)
-            if session["relay"] is not None:
-                bridge.close_session(session["relay"])
-            shutil.rmtree(session["directory"])
+            with anyio.CancelScope(shield=True):
+                await stop_process(process)
+                if session["relay"] is not None:
+                    bridge.close_session(session["relay"])
+                shutil.rmtree(session["directory"])
 
     @asynccontextmanager
     async def lifespan(app):
@@ -117,13 +121,15 @@ def create_server():
                 await asyncio.gather(*tasks, return_exceptions=True)
 
     server = MCPServer("fm", instructions=(
-        "YOU, the host LLM (Codex or Claude), own context preparation and tool handling. "
+        "Prepare context and lend selected tools to Apple FM through a PROGRAMMATIC shim. "
         "Prepare a self-contained task from the relevant conversation, authorized source material, "
         "confirmed facts, constraints and desired output. Supply it in fm_start.prompt and instructions. "
         "For each execution, select needed authorized host tools and supply their reviewed name, "
         "description and inputSchema in fm_start.tools. FM receives the context and tools you pass. "
-        "Execute returned tool_requests yourself under normal host permissions, then return actual "
-        "results through fm_continue. Use tools:[] for tasks fully answerable from supplied context. "
+        "Run scripts/fm_host.js inside the host tool runtime, binding actual host callables once. "
+        "The program executes tool_requests and feeds results through fm_continue automatically; "
+        "do not use host LLM turns to service callbacks or polls. For reviewed executable script "
+        "bindings, use fm_run which manages the loop internally. Use tools:[] for supplied-context tasks. "
         "Check FM's final answer against the original task before replying to the user."),
         lifespan=lifespan)
 
@@ -141,25 +147,26 @@ def create_server():
                     "requests": [{"request_id": item["id"], "name": item["name"],
                                   "arguments": item["arguments"], "deadline": min(item["deadline"], session["deadline"])}
                                  for item in requests],
-                    "next_step": "HOST: execute each request_id at most once using its registered host tool and normal permissions. Call fm_continue with the actual result or error. Never invent results or repeat a side effect when polling returns the same request_id."})
+                    "next_step": "SHIM: dispatch each request_id at most once to its registered host callable and return the actual result through fm_continue. Keep this loop in code, without host LLM turns."})
             await asyncio.sleep(0.1)
         return result({"ok": True, "status": "running", "session_id": identifier,
-                       "next_step": "Call fm_continue with replies:[] to poll for tool requests or the final result."})
+                       "next_step": "SHIM: poll fm_continue with replies:[] inside the same program until completion."})
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False), description=(
-        "Start Apple FM. YOU, the host LLM, prepare the context and handle tools. First assemble "
+        "Low-level start for the programmatic host-tool shim. Prepare context and callable bindings once. Assemble "
         "a self-contained prompt from the relevant conversation, source material, facts, constraints "
         "and requested output; pass task guidance in instructions. Supply selected authorized host "
         "tool definitions in tools for THIS execution. FM sees only the context and tools supplied. "
-        "YOU must execute returned tool_requests and submit real results through fm_continue. "
+        "Use scripts/fm_host.js in the host tool runtime to execute requests and submit real results "
+        "through fm_continue in code. Do not involve the host LLM in individual callbacks or polling. "
         "Use tools:[] only when supplied context is sufficient. "
-        "Keep alias-to-host-tool mapping yourself. Setup/license checks run before inference. "
+        "Keep alias-to-host-tool callable mapping in the program. Setup/license checks run before inference. "
         "Returns running, tool_requests, completed, or failed; keep calling fm_continue until terminal."))
     async def fm_start(
         prompt: Annotated[str, Field(strict=True, min_length=1, max_length=65536,
             description="Host-prepared, self-contained task with relevant conversation context, authorized source material, confirmed facts and desired output. Include needed prior context explicitly.")],
         tools: Annotated[list[ToolDefinition], Field(max_length=16,
-            description="Host tools supplied for this execution: reviewed name, description and inputSchema. The host retains the callable mapping and executes FM's requests. Use [] when supplied context suffices.")],
+            description="Reviewed definitions for this execution. The programmatic shim retains actual host callables and dispatches FM's requests. Use [] when supplied context suffices.")],
         instructions: Annotated[str, Field(strict=True, max_length=16384,
             description="Host-prepared task guidance, constraints and output format for FM.")] = "",
         timeout_seconds: Annotated[int, Field(strict=True, ge=5, le=300)] = 120,
@@ -190,11 +197,72 @@ def create_server():
                    "deadline": time.time() + timeout_seconds}
         session["task"] = asyncio.create_task(run(session, prompt, instructions, timeout_seconds))
         sessions[identifier] = session
-        return await snapshot(identifier, session)
+        try:
+            return await snapshot(identifier, session)
+        except asyncio.CancelledError:
+            with anyio.CancelScope(shield=True):
+                session["task"].cancel()
+                await session["task"]
+            raise
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True), description=(
+        "Run Apple FM with reviewed executable tool bindings and return only the final result. "
+        "Prepare context and fixed script argv once. The program validates FM arguments, sends JSON "
+        "to each registered program's stdin, and feeds its JSON response back to FM automatically. "
+        "No host LLM callback turns or polling are needed. Scripts must already have an authorized "
+        "programmatic connection to the selected tools; host-only tool names are not executable commands. "
+        "For live host callable references instead, run scripts/fm_host.js in the host tool runtime. "
+        "Commands are trusted executable code: review scope before registering; never run FM-generated code."))
+    async def fm_run(
+        prompt: Annotated[str, Field(strict=True, min_length=1, max_length=65536)],
+        tools: Annotated[list[ScriptTool], Field(max_length=16,
+            description="Reviewed definitions plus fixed command argv with an absolute executable. JSON arguments go to stdin, not shell interpolation. Program stdout must be {ok:true,result:...} or {ok:false,errors:[{type,message}]}. Use [] for self-contained tasks.")],
+        instructions: Annotated[str, Field(strict=True, max_length=16384)] = "",
+        timeout_seconds: Annotated[int, Field(strict=True, ge=5, le=300)] = 120,
+    ) -> CallToolResult:
+        try:
+            definitions = callbacks.definitions(tools)
+        except (ValueError, TypeError) as error:
+            return result(failed("InvalidInput", str(error)))
+        started = await fm_start(prompt, definitions, instructions, timeout_seconds)
+        value = json.loads(started.content[0].text)
+        if "session_id" not in value:
+            return started
+        identifier = value["session_id"]
+        session = sessions[identifier]
+        bindings = {tool["name"]: tool for tool in tools}
+        calls = []
+        try:
+            while not session["task"].done():
+                requests = value.get("requests", [])
+                replies = []
+                for request in requests:
+                    remaining = min(request["deadline"], session["deadline"]) - time.time()
+                    if remaining <= 0:
+                        break
+                    tool = bindings.get(request["name"])
+                    response = (await callbacks.execute(tool, request["arguments"], remaining)
+                                if tool is not None else bridge.failure("UnknownTool", "Tool is not registered"))
+                    calls.append({"name": request["name"], "ok": response["ok"]})
+                    replies.append({"request_id": request["request_id"], "response": response})
+                if session["task"].done():
+                    break
+                continued = await fm_continue(identifier, replies)
+                value = json.loads(continued.content[0].text)
+                if not value["ok"]:
+                    return result({key: item for key, item in value.items() if key != "tool_evidence"})
+            await session["task"]
+            return result({**{key: item for key, item in session["outcome"].items() if key != "tool_evidence"},
+                           "session_id": identifier, "tool_calls": calls})
+        finally:
+            with anyio.CancelScope(shield=True):
+                if not session["task"].done():
+                    session["task"].cancel()
+                    await session["task"]
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False), description=(
-        "Continue the task whose context and tools the host supplied to fm_start. YOU, the host LLM, "
-        "handle tool execution and results. Execute each returned tool_request with the corresponding "
+        "Low-level continuation for the programmatic shim, not an instruction for LLM babysitting. "
+        "The program executes each returned tool_request with the corresponding "
         "registered host tool, then submit {request_id,response:{ok:true,result:ACTUAL_OUTPUT}} or "
         "{request_id,response:{ok:false,errors:[{type,message}]}}. Never fabricate results or repeat "
         "host side effects. Use replies:[] to poll. Duplicate, unknown and expired replies are rejected. "
