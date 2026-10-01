@@ -5,8 +5,8 @@
   "plugins": [
     {
       "name": "fm",
-      "version": "0.5.2",
-      "description": "Use Apple's on-device Foundation Model through the official Python SDK.",
+      "version": "0.5.3",
+      "description": "Run Apple Foundation Models. The host assistant must supply needed tools through the FM bridge and execute their requests. Use fm:ask for setup and the relay workflow.",
       "source": "./"
     }
   ]

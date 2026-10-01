@@ -1,14 +1,14 @@
 {
   "name": "fm",
-  "version": "0.5.2",
-  "description": "Use Apple's on-device Foundation Model through the official Python SDK.",
+  "version": "0.5.3",
+  "description": "Run Apple Foundation Models. The host assistant must supply needed tools through the FM bridge and execute their requests. Use fm:ask for setup and the relay workflow.",
   "author": { "name": "sn0wm1ku" },
   "repository": "https://github.com/sn0wm1ku/fm-plugin",
   "license": "MIT",
   "skills": "./skills/",
   "interface": {
     "displayName": "Apple Foundation Models",
-    "shortDescription": "Run a task with the local Apple model",
-    "defaultPrompt": ["Use fm to answer this prompt locally."]
+    "shortDescription": "Run local FM with tools supplied by the host",
+    "defaultPrompt": ["Use fm:ask for this task. Supply any needed authorized host tools through the FM bridge and service its tool requests."]
   }
 }
