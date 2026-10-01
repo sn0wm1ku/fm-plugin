@@ -13,6 +13,7 @@ import stat
 import tempfile
 import time
 from typing import Optional
+from urllib.parse import urlsplit
 import uuid
 
 LIMIT = 256 * 1024
@@ -50,7 +51,7 @@ def check_schema(schema, root=True):
         raise ValueError("Each inputSchema must be a JSON object")
     kind = schema.get("type")
     allowed = {"type", "description", "title"}
-    allowed |= {"properties", "required", "additionalProperties"} if kind == "object" else {"items"} if kind == "array" else {"enum"} if kind == "string" else set()
+    allowed |= {"properties", "required", "additionalProperties"} if kind == "object" else {"items"} if kind == "array" else {"enum", "minLength", "format"} if kind == "string" else set()
     if kind not in ("object", "array", "string", "number", "integer", "boolean") or set(schema) - allowed:
         raise ValueError("Unsupported bridge schema type or keyword: " + str(kind) + " " + str(sorted(set(schema) - allowed)))
     if root and kind != "object":
@@ -71,6 +72,10 @@ def check_schema(schema, root=True):
         check_schema(schema.get("items"), False)
     if "enum" in schema and (not isinstance(schema["enum"], list) or not schema["enum"] or not all(isinstance(item, str) for item in schema["enum"])):
         raise ValueError("enum must be a non-empty list of strings")
+    if "minLength" in schema and (type(schema["minLength"]) is not int or schema["minLength"] < 0):
+        raise ValueError("minLength must be a non-negative integer")
+    if "format" in schema and schema["format"] != "uri":
+        raise ValueError("Only the uri string format is supported")
 
 
 def definitions(manifest):
@@ -133,7 +138,36 @@ def normalize(schema, value):
              type(value) is int if kind == "integer" else type(value) in (int, float) and math.isfinite(value))
     if not valid or "enum" in schema and value not in schema["enum"]:
         raise ValueError("Tool argument violates type or enum")
+    if kind == "string":
+        if len(value) < schema.get("minLength", 0):
+            raise ValueError("Tool argument violates minLength")
+        if schema.get("format") == "uri":
+            validate_uri(value)
     return value
+
+
+def validate_uri(value):
+    # urlsplit alone accepts relative references and strips some controls.
+    if (not re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*:[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*", value)
+            or re.search(r"%(?![0-9A-Fa-f]{2})", value)):
+        raise ValueError("Tool argument must be an absolute URI with valid escaping")
+    parsed = urlsplit(value)
+    if (any(char in parsed.path + parsed.query + parsed.fragment for char in "[]")
+            or "#" in parsed.fragment or parsed.netloc.count("@") > 1
+            or parsed.scheme in ("http", "https") and not parsed.hostname):
+        raise ValueError("Tool argument must be a well-formed absolute URI")
+    # Accessing port also validates malformed and out-of-range port numbers.
+    if parsed.netloc:
+        parsed.port
+
+
+def native_description(schema):
+    guidance = [schema.get("description", "")]
+    if "minLength" in schema:
+        guidance.append("Use at least " + str(schema["minLength"]) + " characters.")
+    if schema.get("format") == "uri":
+        guidance.append("Use a well-formed absolute URI, including its scheme.")
+    return " ".join(part for part in guidance if part) or None
 
 
 def response_value(value):
@@ -226,7 +260,7 @@ def native_type(fm, schema, name):
             lambda cls: fm.GenerationSchema(type_class=cls, description=schema.get("description"), properties=[]))})
     annotations = {key: native_type(fm, child, name + key) for key, child in schema["properties"].items()}
     annotations = {key: value if key in schema.get("required", []) else Optional[value] for key, value in annotations.items()}
-    fields = {key: fm.guide(child.get("description"), **native_guides(fm, child))
+    fields = {key: fm.guide(native_description(child), **native_guides(fm, child))
               for key, child in schema["properties"].items()}
     return fm.generable(schema.get("description", name))(type(name, (), {"__annotations__": annotations, **fields}))
 

@@ -6,6 +6,13 @@ tools already available to Codex or Claude Code. Complete the [setup and terms
 gate](../README.md#set-up-and-install) first; it also runs at runtime before
 extensions are loaded or a bridge is created.
 
+For weather, news, prices, or private records, the host assistant must first
+decide which source data are missing. Discover the relevant tools and create the
+relay before asking fm to answer. For weather, use an available weather tool or
+web search/fetch capability; preserve location, observation time, units, and
+source URLs in the returned result. A plain offline response saying it cannot
+access live data means the handoff was not completed.
+
 ## Try the existing tool
 
 Run these commands from the plugin directory. Elsewhere, use absolute paths for
@@ -104,6 +111,13 @@ the host must service requests while model generation waits. Python does not
 receive the host's credentials or installed plugin implementation.
 
 Create a manifest with only the reviewed tool definitions needed for this task.
+In Claude Code, discover deferred MCP tools through the session's `ToolSearch`
+tool and inspect the loaded definitions; built-in `WebSearch` and `WebFetch` may
+also provide current sources when available. The host writes the manifest itself.
+For a long or incompatible host tool name, use a short valid alias and retain its
+mapping to the actual callable in the host's context. Keep that mapping outside
+the manifest. The bridge shares selected definitions and results; it does not
+require copying a plugin or reconnecting its account.
 This illustrative definition assumes the host has a matching authorized email
 read operation; substitute its actual reviewed definition and argument names:
 
@@ -125,7 +139,11 @@ read operation; substitute its actual reviewed definition and argument names:
 The manifest accepts `object`, `array`, `string`, `number`, `integer`, and
 `boolean` types, with `title` and `description`. Objects use `properties`,
 `required`, and `additionalProperties: false`; arrays use `items`; strings may
-have `enum`. Optional object properties are supported. Tool names start with a
+have `enum`, a non-negative `minLength`, and `format: "uri"`. The latter two are
+explained to the model and validated before a request reaches the host, including
+inside arrays and nested objects. Other formats remain unsupported. This accepts
+the string constraints used by Claude Code's WebSearch and WebFetch tools without
+discarding them. Optional object properties are supported. Tool names start with a
 letter and contain up to 64 letters, digits, or underscores. Property names also
 start with a letter and use letters, digits, or underscores; Python keywords
 cannot be property names. The top-level input schema must be an object.
@@ -148,10 +166,31 @@ python3 scripts/fm_sdk.py respond --bridge <session> --timeout 180 --save-transc
 python3 scripts/fm_bridge.py poll --session <session>
 ```
 
+In Claude Code, launch the `respond` command with these **Bash tool parameters**
+(replace paths with the approved interpreter and installed helper):
+
+```json
+{
+  "command": "\"<python>\" \"<helper>\" respond --bridge \"<session>\" --timeout 180 --save-transcript \"<transcript>\" \"Use the supplied tools to answer the current-weather request.\"",
+  "run_in_background": true,
+  "timeout": 240000
+}
+```
+
+Keep Bash's returned task ID and output-file path, and immediately poll in a
+separate Bash call. Waiting for the model's final answer first would leave its
+tool request unserviced. Invoke each requested host tool using Claude's normal
+tool-call interface, then Write the response file and run `reply` below. Use
+`Read` on the background output file to inspect progress and final JSON. For
+Codex, use a yielding exec session and retrieve output with its session ID.
+See Claude's [background command documentation](https://code.claude.com/docs/en/tools-reference#background-commands).
+
 `poll` returns `requests`, each containing `id`, `name`, `arguments`, and
 `deadline`. For each pending request, the host checks that the name matches a
 selected tool and its arguments remain within the user's authorization. The
 host then calls the real tool through its normal API and permission flow.
+Check the request deadline and remember serviced IDs to avoid duplicate calls.
+An empty poll is not completion; check the running process and continue polling.
 An fm tool name is data, never a shell command; model-provided code is never run.
 
 Write the actual safe result to a response file, using one of these shapes:
@@ -183,6 +222,12 @@ python3 scripts/fm_bridge.py close --session <session>
 Closing is idempotent, so host cleanup can run even if inference already closed
 the session. Remove only temporary task files you created. After cancellation,
 do not execute late requests or retry writes without verifying what happened.
+
+If fm still says it lacks live access, inspect whether the intended tool was
+registered and actually called. Correct a missed handoff instead of presenting
+that response as completion. If tool discovery, permissions, schema conversion,
+or execution blocks the task, report that observed error and any source-data
+alternative appropriate to the user's request.
 
 Bridge mode supports `respond` with transcripts, but rejects streaming, batch,
 and simultaneous Python extensions. On resume, create a new bridge with the same
