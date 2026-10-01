@@ -15,6 +15,13 @@ access live data means the handoff was not completed.
 
 ## Callable MCP bridge
 
+The host LLM owns context preparation and tool handling. Prepare a self-contained
+task from the relevant conversation and authorized source material; include facts,
+constraints and output requirements explicitly. Supply this context and the
+selected tool definitions together when calling `fm_start` for each execution.
+The host then executes requested tools, returns their real results, and verifies
+FM's answer against the original task.
+
 Installing the plugin registers `fm_start`, `fm_continue`, and `fm_cancel` in
 both Codex and Claude Code. The clients may prefix those names with the server
 or plugin namespace. Their tool descriptions explain the host's responsibility

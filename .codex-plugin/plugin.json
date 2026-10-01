@@ -1,7 +1,7 @@
 {
   "name": "fm",
-  "version": "0.6.0",
-  "description": "Apple Foundation Models with callable bridge tools. Supply selected host tools to fm_start, execute FM's requests, and return real results with fm_continue. Use fm:ask for setup and advanced features.",
+  "version": "0.6.1",
+  "description": "The host LLM prepares context and handles tools. Supply a self-contained task and selected tools to fm_start for each execution, execute FM's tool requests, and return real results with fm_continue. Use fm:ask for setup.",
   "author": { "name": "sn0wm1ku" },
   "repository": "https://github.com/sn0wm1ku/fm-plugin",
   "license": "MIT",
@@ -9,7 +9,7 @@
   "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
     "displayName": "Apple Foundation Models",
-    "shortDescription": "Run local FM with tools supplied by the host",
-    "defaultPrompt": ["Use fm:ask for this task. Supply needed authorized tools to fm_start, execute its host tool requests, and submit real results with fm_continue."]
+    "shortDescription": "Run FM with host-prepared context and tools",
+    "defaultPrompt": ["Use fm:ask. Prepare a self-contained task from the relevant conversation and sources, supply that context and selected tools to fm_start, handle tool requests with fm_continue, and verify FM's answer."]
   }
 }

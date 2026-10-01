@@ -117,11 +117,14 @@ def create_server():
                 await asyncio.gather(*tasks, return_exceptions=True)
 
     server = MCPServer("fm", instructions=(
-        "YOU, the host assistant (Codex or Claude), must supply tools Apple FM needs. "
-        "For current/private information, discover your own available tools and pass their reviewed "
-        "name, description and inputSchema to fm_start. Execute returned tool_requests yourself with "
-        "your normal permissions, then give real results to fm_continue. FM cannot invoke your tools "
-        "without this relay. Use an empty tools array only for tasks answerable from supplied text."),
+        "YOU, the host LLM (Codex or Claude), own context preparation and tool handling. "
+        "Prepare a self-contained task from the relevant conversation, authorized source material, "
+        "confirmed facts, constraints and desired output. Supply it in fm_start.prompt and instructions. "
+        "For each execution, select needed authorized host tools and supply their reviewed name, "
+        "description and inputSchema in fm_start.tools. FM receives the context and tools you pass. "
+        "Execute returned tool_requests yourself under normal host permissions, then return actual "
+        "results through fm_continue. Use tools:[] for tasks fully answerable from supplied context. "
+        "Check FM's final answer against the original task before replying to the user."),
         lifespan=lifespan)
 
     async def snapshot(identifier, session):
@@ -144,16 +147,21 @@ def create_server():
                        "next_step": "Call fm_continue with replies:[] to poll for tool requests or the final result."})
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False), description=(
-        "Start Apple FM with tools YOU (Codex/Claude) supply. For live/current/private data, FIRST "
-        "discover your available host tools, review their schemas, then pass the selected tools here. "
-        "This registers tools with FM, but YOU must execute returned tool_requests and submit their "
-        "real results through fm_continue. tools:[] explicitly selects a self-contained text task. "
+        "Start Apple FM. YOU, the host LLM, prepare the context and handle tools. First assemble "
+        "a self-contained prompt from the relevant conversation, source material, facts, constraints "
+        "and requested output; pass task guidance in instructions. Supply selected authorized host "
+        "tool definitions in tools for THIS execution. FM sees only the context and tools supplied. "
+        "YOU must execute returned tool_requests and submit real results through fm_continue. "
+        "Use tools:[] only when supplied context is sufficient. "
         "Keep alias-to-host-tool mapping yourself. Setup/license checks run before inference. "
         "Returns running, tool_requests, completed, or failed; keep calling fm_continue until terminal."))
     async def fm_start(
-        prompt: Annotated[str, Field(strict=True, min_length=1, max_length=65536)],
-        tools: Annotated[list[ToolDefinition], Field(max_length=16)],
-        instructions: Annotated[str, Field(strict=True, max_length=16384)] = "",
+        prompt: Annotated[str, Field(strict=True, min_length=1, max_length=65536,
+            description="Host-prepared, self-contained task with relevant conversation context, authorized source material, confirmed facts and desired output. Include needed prior context explicitly.")],
+        tools: Annotated[list[ToolDefinition], Field(max_length=16,
+            description="Host tools supplied for this execution: reviewed name, description and inputSchema. The host retains the callable mapping and executes FM's requests. Use [] when supplied context suffices.")],
+        instructions: Annotated[str, Field(strict=True, max_length=16384,
+            description="Host-prepared task guidance, constraints and output format for FM.")] = "",
         timeout_seconds: Annotated[int, Field(strict=True, ge=5, le=300)] = 120,
     ) -> CallToolResult:
         if not prompt.strip():
@@ -185,11 +193,12 @@ def create_server():
         return await snapshot(identifier, session)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False), description=(
-        "Continue an FM session. YOU must execute each returned tool_request with the corresponding "
+        "Continue the task whose context and tools the host supplied to fm_start. YOU, the host LLM, "
+        "handle tool execution and results. Execute each returned tool_request with the corresponding "
         "registered host tool, then submit {request_id,response:{ok:true,result:ACTUAL_OUTPUT}} or "
         "{request_id,response:{ok:false,errors:[{type,message}]}}. Never fabricate results or repeat "
         "host side effects. Use replies:[] to poll. Duplicate, unknown and expired replies are rejected. "
-        "Continue until completed or failed; do not abandon a running session."))
+        "Continue until completed or failed; verify the final answer against the original task and context."))
     async def fm_continue(
         session_id: Annotated[str, Field(strict=True, pattern="^[0-9a-f]{32}$")],
         replies: Annotated[list[ToolReply], Field(max_length=16)],
