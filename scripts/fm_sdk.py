@@ -58,6 +58,7 @@ def parser():
         sub.add_argument("--temperature", type=float)
         sub.add_argument("--max-tokens", type=int)
         if command == "respond":
+            sub.add_argument("--bridge", type=Path, help="Private session created by fm_bridge.py for selected host tools")
             sub.add_argument("--stream", action="store_true", help="JSONL full-text snapshots, then final result")
             sub.add_argument("--save-transcript", type=Path)
         else:
@@ -76,6 +77,7 @@ def validate(args):
         (getattr(args, "greedy", False) and getattr(args, "seed", None) is not None, "greedy cannot be combined with seed"),
         (getattr(args, "seed", None) is not None and getattr(args, "top_k", None) is None and getattr(args, "top_p", None) is None, "seed requires top-k or top-p on SDK 0.2.1"),
         (getattr(args, "stream", False) and getattr(args, "schema", None) is not None, "stream supports text only; remove schema"),
+        (getattr(args, "bridge", None) is not None and (getattr(args, "stream", False) or args.extension is not None), "bridge uses respond without stream or extension"),
         (getattr(args, "resume", None) is not None and (args.instructions is not None or args.instructions_file is not None), "resume uses saved instructions; omit new instructions"),
     )
     errors = [{"type": "InvalidInput", "message": message} for invalid, message in checks if invalid]
@@ -106,6 +108,9 @@ def configuration(args, fm):
     if "create_tools" in extension and (not callable(extension["create_tools"]) or inspect.iscoroutinefunction(extension["create_tools"])):
         return failure("InvalidExtension", "create_tools must be a synchronous callable returning a list of tools")
     tools = extension["create_tools"]() if "create_tools" in extension else []
+    if getattr(args, "bridge", None):
+        import fm_bridge
+        tools = fm_bridge.create_tools(fm, args.bridge, timeout=args.timeout)
     if not isinstance(tools, list) or not all(isinstance(tool, fm.Tool) for tool in tools):
         return failure("InvalidExtension", "create_tools() must return a list of fm.Tool instances")
     if any(not isinstance(tool.name, str) or not tool.name.strip()
@@ -254,11 +259,22 @@ async def dispatch(args, fm):
             emit(failure("InvalidInput", "Transcript output must not overwrite an input file"))
             return 2
     result = await attempt(args, config, model, fm, text, args.image)
+    if getattr(args, "bridge", None):
+        import fm_bridge
+        errors = fm_bridge.session_errors(args.bridge)
+        if errors:
+            result = {"ok": False, "errors": errors}
     emit({**result, **({"event": "complete" if result["ok"] else "error"} if getattr(args, "stream", False) else {})})
     return 0 if result["ok"] else 1
 
 
 def execute(args):
+    if args.command != "available":
+        from fm_setup import check_installation
+        checked = check_installation()
+        if not checked["ok"]:
+            emit(checked)
+            return 1
     try:
         fm = importlib.import_module("apple_fm_sdk")
     except (ImportError, OSError) as error:
@@ -281,14 +297,30 @@ def stream_worker(args):
     sys.exit(execute(args))
 
 
+def close_bridge(args):
+    if getattr(args, "bridge", None):
+        import fm_bridge
+        try:
+            fm_bridge.close_session(args.bridge)
+        except (OSError, ValueError) as error:
+            emit(failure("BridgeCleanupFailed", str(error)), sys.stderr)
+            return False
+    return True
+
+
 def main():
     args = parser().parse_args()
     checked = validate(args)
     if not checked["ok"]:
         emit(checked)
+        close_bridge(args)
         return 2
     if not getattr(args, "stream", False):
-        return execute(args)
+        try:
+            status = execute(args)
+        finally:
+            closed = close_bridge(args)
+        return status if closed else 1
     # SDK 0.2.1 blocks its event loop while waiting for snapshots. A process
     # deadline also covers the period before the first snapshot arrives.
     process = multiprocessing.get_context("spawn").Process(target=stream_worker, args=(args,))

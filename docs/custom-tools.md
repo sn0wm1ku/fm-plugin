@@ -1,8 +1,10 @@
 # Custom tools for fm
 
-Tools let the on-device model request a bounded lookup, calculation, or API call
-from Python. Start with the bundled [catalog lookup](../examples/lookup.py): it
-uses fabricated data and reads no external service.
+Tools let the on-device model request a bounded lookup, calculation, or API call.
+Use a Python extension for local implementations, or the host relay for selected
+tools already available to Codex or Claude Code. Complete the [setup and terms
+gate](../README.md#set-up-and-install) first; it also runs at runtime before
+extensions are loaded or a bridge is created.
 
 ## Try the existing tool
 
@@ -89,12 +91,104 @@ Keep tool results limited to information necessary for the user's request.
 The local model's inference runs on-device; a Python API client can still send
 data over the network according to its implementation.
 
-For the email translation workflow, the host assistant can retrieve the requested
-emails through its authorized connector and pass their text to fm. If fm should
-choose among already retrieved emails, a narrow local lookup tool can expose
-those records by ID. Direct Gmail access from Python instead requires its own
-authorized Gmail client. Host Codex/Claude Gmail and MCP connectors, including
-their credentials, are not automatically available to an extension.
+For email translation, the host can retrieve authorized emails and pass their
+text to fm, or relay selected connector calls as described below. Direct Gmail
+access from Python requires its own authorized client. The host relay keeps
+Codex/Claude Gmail and MCP credentials with their existing host tools.
+
+## Use tools already available to the host
+
+The bridge lets fm request a selected host tool while the host assistant executes
+it using its existing authorized connector or tool API. This is a live relay:
+the host must service requests while model generation waits. Python does not
+receive the host's credentials or installed plugin implementation.
+
+Create a manifest with only the reviewed tool definitions needed for this task.
+This illustrative definition assumes the host has a matching authorized email
+read operation; substitute its actual reviewed definition and argument names:
+
+```json
+{
+  "tools": [{
+    "name": "read_email",
+    "description": "Read one email authorized for this translation task by its ID.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {"id": {"type": "string", "description": "Authorized email ID"}},
+      "required": ["id"],
+      "additionalProperties": false
+    }
+  }]
+}
+```
+
+The manifest accepts `object`, `array`, `string`, `number`, `integer`, and
+`boolean` types, with `title` and `description`. Objects use `properties`,
+`required`, and `additionalProperties: false`; arrays use `items`; strings may
+have `enum`. Optional object properties are supported. Tool names start with a
+letter and contain up to 64 letters, digits, or underscores. Property names also
+start with a letter and use letters, digits, or underscores; Python keywords
+cannot be property names. The top-level input schema must be an object.
+Unsupported schema
+keywords are rejected. Do not remove constraints to make an incompatible host
+schema pass; choose a compatible tool or pass already retrieved source text.
+
+Write the manifest with the host's file tool, then create a private relay session:
+
+```sh
+python3 scripts/fm_bridge.py create --manifest selected-tools.json
+```
+
+The response is `{"ok":true,"session":"/absolute/private/session/path"}`.
+Substitute that path for `<session>` below. Start inference in a continuing shell
+execution session, so the host remains able to run polling and connector calls:
+
+```sh
+python3 scripts/fm_sdk.py respond --bridge <session> --timeout 180 --save-transcript translated.json 'Read the authorized email IDs supplied with this task and translate them to Cantonese.'
+python3 scripts/fm_bridge.py poll --session <session>
+```
+
+`poll` returns `requests`, each containing `id`, `name`, `arguments`, and
+`deadline`. For each pending request, the host checks that the name matches a
+selected tool and its arguments remain within the user's authorization. The
+host then calls the real tool through its normal API and permission flow.
+An fm tool name is data, never a shell command; model-provided code is never run.
+
+Write the actual safe result to a response file, using one of these shapes:
+
+```json
+{"ok": true, "result": {"id": "actual-id", "body": "Actual authorized email text"}}
+```
+
+```json
+{"ok": false, "errors": [{"type": "LookupFailed", "message": "Actual error"}]}
+```
+
+`result` can be a JSON value. Keep the whole response under 256 KiB and return
+only relevant authorized data, without credentials. Preserve failures honestly.
+Use the request's exact `id` (a 32-character hex identifier) to reply:
+
+```sh
+python3 scripts/fm_bridge.py reply --session <session> --id <request-id> --response response.json
+```
+
+Continue polling and replying until inference finishes, then check its final
+JSON and exit status. Tool results feed back into fm's answer and can be checked
+in the saved transcript. Close in every completion, cancellation, or error path:
+
+```sh
+python3 scripts/fm_bridge.py close --session <session>
+```
+
+Closing is idempotent, so host cleanup can run even if inference already closed
+the session. Remove only temporary task files you created. After cancellation,
+do not execute late requests or retry writes without verifying what happened.
+
+Bridge mode supports `respond` with transcripts, but rejects streaming, batch,
+and simultaneous Python extensions. On resume, create a new bridge with the same
+reviewed definitions and pass `--bridge` alongside `--resume`. The shared `ask`
+skill manages setup and relay; the surrounding host model/tool activity retains
+its normal costs and data handling even though fm inference is on-device.
 
 ## Keep execution bounded
 
