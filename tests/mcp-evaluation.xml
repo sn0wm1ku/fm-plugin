@@ -1,0 +1,42 @@
+<evaluation>
+  <qa_pair>
+    <question>Inspect the FM bridge tool definitions. Which tool starts generation, and which tool accepts real results after you execute FM's host tool requests? Return the two names separated by a comma.</question>
+    <answer>fm_start,fm_continue</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Start a self-contained FM task with an explicit empty tools array: extract the project code from 'Project code: MAPLE-42'. Continue until terminal status. Return only the extracted code.</question>
+    <answer>MAPLE-42</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Using the FM MCP bridge, pass this entire source text with no tools: 'Stock records: A has 7 units; B has 12 units.' Ask FM which product has more units. Continue until complete and return only its code.</question>
+    <answer>B</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect fm_start's declared timeout bounds, then call it with prompt 'hello', tools [], and timeout_seconds 0. Was the invalid timeout rejected before starting a model task? Return rejected or accepted.</question>
+    <answer>rejected</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect fm_continue, then call it with session_id 00000000000000000000000000000000 and replies []. Report only the returned error type.</question>
+    <answer>UnknownSession</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Call fm_start with prompt 'Read the fixture', tools containing name lookup, description 'Read a fixture', inputSchema type object, properties {}, required [], and additionalProperties true. Does the bridge reject this unsupported schema? Return rejected or accepted.</question>
+    <answer>rejected</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect the bridge tool descriptions and the shared skill. When FM requests a supplied host tool, which participant must execute the real operation through its existing authorized tool API? Return host assistant or Apple model.</question>
+    <answer>host assistant</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Use FM with tools [] to classify this provided text: 'The package arrived broken and I want a refund.' Ask for exactly one label from complaint, praise. Continue until completion and return only the label.</question>
+    <answer>complaint</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect the callable bridge workflow. While generation is running with no pending host requests, what list value should you send as replies to fm_continue to collect the next event? Return its JSON representation.</question>
+    <answer>[]</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Call fm_cancel for session_id 00000000000000000000000000000000. Report only the returned error type. Do not start another session.</question>
+    <answer>UnknownSession</answer>
+  </qa_pair>
+</evaluation>

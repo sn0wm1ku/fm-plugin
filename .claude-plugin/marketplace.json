@@ -5,8 +5,8 @@
   "plugins": [
     {
       "name": "fm",
-      "version": "0.5.3",
-      "description": "Run Apple Foundation Models. The host assistant must supply needed tools through the FM bridge and execute their requests. Use fm:ask for setup and the relay workflow.",
+      "version": "0.6.0",
+      "description": "Apple Foundation Models with callable bridge tools. Supply selected host tools to fm_start, execute FM's requests, and return real results with fm_continue. Use fm:ask for setup and advanced features.",
       "source": "./"
     }
   ]

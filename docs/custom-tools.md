@@ -13,7 +13,44 @@ web search/fetch capability; preserve location, observation time, units, and
 source URLs in the returned result. A plain offline response saying it cannot
 access live data means the handoff was not completed.
 
-## Try the existing tool
+## Callable MCP bridge
+
+Installing the plugin registers `fm_start`, `fm_continue`, and `fm_cancel` in
+both Codex and Claude Code. The clients may prefix those names with the server
+or plugin namespace. Their tool descriptions explain the host's responsibility
+to supply tools before starting FM.
+
+1. Discover the actual host tool and inspect its definition. Select only the
+   operations authorized for this task. If its name needs a short alias, retain
+   the alias-to-callable mapping in the host's context.
+2. Call `fm_start` with `prompt` and `tools`, an array of
+   `{name, description, inputSchema}` objects. The schemas follow the same
+   [supported subset](#use-tools-already-available-to-the-host) as the file relay.
+   Use `tools: []` explicitly when all source information is already in the prompt.
+3. The bridge returns a session ID and either model progress, pending tool
+   requests, or a final result. For each pending request, verify the requested
+   name, arguments, deadline, and scope, then call the real host tool once.
+4. Send its result to `fm_continue` with the session ID and
+   `replies: [{"request_id":"<returned-id>","response":{"ok":true,"result":...}}]`.
+   A failed or denied host call uses `response` with `ok: false` and
+   `errors: [{"type":"ToolFailed","message":"actual error"}]`. Poll with
+   `replies: []` while running. Continue until the bridge reports completion or
+   failure, then inspect the answer and returned tool-use evidence.
+5. Call `fm_cancel` when abandoning a task. It stops inference and cleans up
+   its private files; host actions already executed remain the host's responsibility.
+
+For example, Claude can give FM its available WebFetch definition. FM returns
+a URL and fetch prompt; Claude invokes WebFetch, then returns its real output
+through `fm_continue`. Codex follows the same protocol with a selected tool
+available in its own session. The plugin manages the subprocess and relay files,
+so neither host needs to write a manifest or run background shell commands for
+this workflow. Credentials and tool implementations remain in the host.
+
+The server uses the setup receipt's Python interpreter and checks prerequisites
+and agreement before generation. Missing dependencies require permission to
+install; tool calls never accept Apple terms or install packages automatically.
+
+## Try the existing Python tool
 
 Run these commands from the plugin directory. Elsewhere, use absolute paths for
 the helper and extension, with the Python interpreter that has the SDK installed.

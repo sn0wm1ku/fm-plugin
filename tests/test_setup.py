@@ -42,6 +42,10 @@ def main():
             stored = json.loads(receipt.read_text())
             assert stored["decision"] == "agree" and stored["python"] == sys.executable
             assert setup.check_installation()["ready"]
+            with patch.object(setup.sys, "executable", "/replacement/python3"):
+                assert setup.check_installation()["ready"]
+                rebound = json.loads(receipt.read_text())
+                assert rebound == {**stored, "python": "/replacement/python3"}
             assert list(receipt.parent.iterdir()) == [receipt]
             check.return_value = setup.failure("PrerequisitesFailed", "Dependency removed")
             assert kind(setup.check_installation()) == "PrerequisitesFailed"
@@ -73,7 +77,7 @@ def main():
          patch.object(setup.platform, "machine", return_value="arm64"), \
          patch.object(setup, "run", side_effect=command), \
          patch.object(setup.importlib, "import_module", return_value=sdk) as importer, \
-         patch.object(setup.importlib.metadata, "version", return_value="0.2.1"), \
+         patch.object(setup.importlib.metadata, "version", side_effect=lambda name: "0.2.1" if name == "apple-fm-sdk" else "2.2.0"), \
          patch.object(setup.shutil, "which", return_value="/usr/bin/fm"):
         with patch.object(setup.sys, "version_info", (3, 10)):
             assert setup.prerequisite_check()["ok"]
@@ -84,6 +88,9 @@ def main():
         assert kind(result) == "PrerequisitesFailed"
         missing = next(item for item in result["checks"] if item["name"] == "sdk")
         assert missing["remediation"]["argv"] == [sys.executable, "-m", "pip", "install", "apple-fm-sdk==0.2.1"]
+        missing_mcp = next(item for item in result["checks"] if item["name"] == "mcp")
+        assert not missing_mcp["ok"]
+        assert missing_mcp["remediation"]["argv"] == [sys.executable, "-m", "pip", "install", "mcp==2.2.0"]
     print("Setup checks passed (offline, no licenses accepted or dependencies installed).")
 
 

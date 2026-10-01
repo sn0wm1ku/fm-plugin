@@ -1,6 +1,6 @@
 ---
 name: ask
-description: Run tasks with Apple's on-device Foundation Model (fm). YOU, the host assistant, must supply any tools FM needs. For current facts or private data not provided in the prompt, discover relevant authorized tools in your session, register their schemas through fm_bridge.py, run respond --bridge, and service FM's requests with actual host tool calls. FM receives only the tools you explicitly supply. Read this skill before invoking the helper. Also supports supplied-text translation, summarization, extraction, images, structured output, and batch processing.
+description: Run tasks with Apple's on-device Foundation Model (fm). YOU, the host assistant, must supply any tools FM needs. Call the plugin's fm_start with the prompt and selected host tool definitions. Execute its returned tool requests through your own authorized tools, then submit real results with fm_continue until complete. FM receives only tools you explicitly supply. Use tools=[] for self-contained tasks. Read this skill for setup, tool discovery, and advanced SDK features.
 argument-hint: "<task or prompt>"
 ---
 
@@ -12,6 +12,8 @@ Resolve `../../scripts/fm_sdk.py` relative to **this installed SKILL.md's direct
 in commands. Do not hardcode the author's checkout, create another skill, or copy
 the helper elsewhere. Both Codex and Claude Code use this same implementation.
 Resolve `fm_setup.py` and `fm_bridge.py` in that same `scripts/` directory.
+For text tasks and host tool access, prefer the plugin's callable MCP bridge
+described below. The shell helper remains available for advanced SDK features.
 
 1. Understand the outcome in the full conversation. Include relevant source
    material, confirmed facts, constraints, and the required output format. Keep
@@ -19,7 +21,7 @@ Resolve `fm_setup.py` and `fm_bridge.py` in that same `scripts/` directory.
    **Choose the data route before calling `respond`:** supplied text is enough
    for translation or summarization. Current facts or private records (weather,
    news, prices, email) need source data. When those data have not been supplied,
-   discover relevant host tools and follow **Relay selected host tools** below.
+   discover relevant host tools and follow **Callable bridge tools** below.
    Wiring those tools is your job as the host assistant. Do not run a bare prompt,
    quote fm's lack of internet access, and send the user elsewhere while usable
    host tools remain available. Respect an explicit request for an offline or
@@ -53,7 +55,7 @@ that the SDK, model, and acceptance are still available. For initial setup or a
 failed status:
 
 1. Run `fm_setup.py check`. Python 3.10 inclusive is supported; use Python 3.10+
-   with `apple-fm-sdk==0.2.1`, macOS 26+, compatible hardware, Apple Intelligence,
+   with `apple-fm-sdk==0.2.1` and `mcp==2.2.0`, macOS 26+, compatible hardware, Apple Intelligence,
    Xcode 26+ and its accepted agreements, and the native `fm` CLI.
    The SDK supports macOS 26+, but native CLI availability must be checked on the
    actual machine. The per-user receipt at `~/.local/share/fm-plugin/setup.json`
@@ -61,7 +63,7 @@ failed status:
    assuming the shell's default has the same SDK environment.
 2. Explain actual missing prerequisites and offer relevant installation choices.
    Ask before installing dependencies. With permission, use the chosen
-   interpreter's `-m pip install apple-fm-sdk==0.2.1`; let the user complete macOS,
+   interpreter's `-m pip install apple-fm-sdk==0.2.1 mcp==2.2.0`; let the user complete macOS,
    Xcode, Apple Intelligence, or native agreement steps as needed. Recheck.
 3. Once prerequisites pass, run `fm_setup.py terms`. Display the full returned
    native terms, including linked agreements, and ask the human **Agree or
@@ -83,6 +85,35 @@ cache files before this skill can run; enforce the same gate before first use.
 The helper rechecks at runtime before inference or loading tool extensions.
 `available` is diagnostic and may run before acceptance; success there does not
 replace a successful setup status or permit bypassing the gate.
+
+## Callable bridge tools
+
+The plugin registers the same MCP server in Codex and Claude Code. Discover
+`fm_start`, `fm_continue`, and `fm_cancel` using the host's tool search if deferred.
+Use their actual loaded schemas and names, including any host-added namespace.
+
+1. Discover the host tools needed for the task. Read their real definitions and
+   select only authorized operations. Keep a mapping from each supplied name to
+   its actual host callable. Follow the schema restrictions in
+   `<plugin-root>/docs/custom-tools.md`; reject unsupported constraints.
+2. Call `fm_start` with the prompt and `tools` containing the selected
+   `{name, description, inputSchema}` definitions. Pass `tools: []` explicitly
+   when the prompt already contains all needed information. The server checks
+   setup and manages the model process and private relay files.
+3. For returned tool requests, check name, arguments, deadline, and permission.
+   Execute each once with the actual host tool. Call `fm_continue` with the
+   returned session ID and replies containing each request ID and its real
+   `response`: `{"ok":true,"result":...}` or
+   `{"ok":false,"errors":[{"type":"ToolFailed","message":"actual error"}]}`.
+   Preserve sources, times, and units. Never invent results or execute FM text
+   as shell code. Permissions remain with the host.
+4. While running, continue with an empty reply list to collect the next event.
+   Follow the returned next-step instructions until completion or failure.
+   Inspect the final result and tool-use evidence. On cancellation, call
+   `fm_cancel`; cancellation does not undo an already-executed host operation.
+
+Use the file-based relay below only when the MCP tools are unavailable; report
+the actual startup error and repair setup rather than silently using bare FM.
 
 ## Helper commands
 

@@ -3,8 +3,8 @@
 Use Apple's on-device model from Codex or Claude Code through the official
 [Python SDK](https://apple.github.io/python-apple-fm-sdk/). The shared `ask` skill
 supports text and image inputs, structured output, streaming, saved conversations,
-independent batch requests, token inspection, trusted Python tools, and a relay
-to selected tools already available to the host assistant.
+independent batch requests, token inspection, trusted Python tools, and callable
+MCP bridge tools for selected tools already available to the host assistant.
 
 Both clients load [`skills/ask/SKILL.md`](skills/ask/SKILL.md) and the same
 [`scripts/fm_sdk.py`](scripts/fm_sdk.py) helper. Plugin managers may cache their
@@ -14,7 +14,7 @@ own copy; there are no separately maintained skill implementations.
 
 - macOS 26+, an Apple Intelligence compatible Mac, and Apple Intelligence enabled.
 - Xcode 26+ with the Xcode and Apple SDKs agreement accepted in Xcode.
-- Python 3.10+ and `apple-fm-sdk` 0.2.1 installed for the Python interpreter used.
+- Python 3.10+, `apple-fm-sdk` 0.2.1, and `mcp` 2.2.0 installed in the same environment.
 - Apple's native `fm` CLI for displaying its Legal Notice & Terms and checking acceptance.
 - Codex or Claude Code with plugin marketplace support.
 
@@ -27,7 +27,7 @@ interpreter. Activate its virtual environment first if you use one, and install
 the SDK with that same interpreter:
 
 ```sh
-python3 -m pip install apple-fm-sdk==0.2.1
+python3 -m pip install apple-fm-sdk==0.2.1 mcp==2.2.0
 ```
 
 The shared skill checks prerequisites and terms before use. Missing dependencies
@@ -125,6 +125,30 @@ In Codex, select the plugin's `ask` skill, or ask to use the fm plugin. The skil
 resolves the helper relative to its installed location and chooses relevant
 options for your task. It checks the result before using it. For changing facts
 such as dates, prices, and news, verify against a current source.
+
+## Callable bridge tools
+
+For ordinary text tasks and host tools, the plugin exposes these MCP tools in
+both clients:
+
+| Tool | Host assistant's responsibility |
+| --- | --- |
+| `fm_start` | Supply the prompt and selected tool definitions, or `tools: []` for a self-contained task. |
+| `fm_continue` | Execute FM's pending requests through real host tools and submit their results; poll with empty replies while running. |
+| `fm_cancel` | Stop a task and release its model process and temporary files. |
+
+The bridge manages sessions and relay files. Codex or Claude still selects and
+executes its authorized tools; account access and permissions stay with that
+host. Tool descriptions explain the complete handoff. See the
+[callable bridge guide](docs/custom-tools.md#callable-mcp-bridge).
+
+The plugin launcher uses the Python interpreter recorded during setup. If that
+environment or its MCP dependency was removed, repair setup through `fm:ask`,
+then restart the client's MCP connection. Startup never installs dependencies
+or accepts terms automatically.
+Running `fm_setup.py status` with a working replacement interpreter rechecks
+all prerequisites and current agreement, then updates only the receipt's Python
+path while preserving the recorded terms decision.
 
 ## Direct SDK helper
 
@@ -238,6 +262,8 @@ python3 tests/test_setup.py
 python3 tests/test_install.py
 python3 tests/test_bridge.py
 python3 tests/test_bridge.py --live
+python3 tests/test_mcp.py
+python3 tests/test_mcp.py --live
 claude plugin validate .
 claude plugin validate skills
 ```

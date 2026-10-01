@@ -1,14 +1,15 @@
 {
   "name": "fm",
-  "version": "0.5.3",
-  "description": "Run Apple Foundation Models. The host assistant must supply needed tools through the FM bridge and execute their requests. Use fm:ask for setup and the relay workflow.",
+  "version": "0.6.0",
+  "description": "Apple Foundation Models with callable bridge tools. Supply selected host tools to fm_start, execute FM's requests, and return real results with fm_continue. Use fm:ask for setup and advanced features.",
   "author": { "name": "sn0wm1ku" },
   "repository": "https://github.com/sn0wm1ku/fm-plugin",
   "license": "MIT",
   "skills": "./skills/",
+  "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
     "displayName": "Apple Foundation Models",
     "shortDescription": "Run local FM with tools supplied by the host",
-    "defaultPrompt": ["Use fm:ask for this task. Supply any needed authorized host tools through the FM bridge and service its tool requests."]
+    "defaultPrompt": ["Use fm:ask for this task. Supply needed authorized tools to fm_start, execute its host tool requests, and submit real results with fm_continue."]
   }
 }
