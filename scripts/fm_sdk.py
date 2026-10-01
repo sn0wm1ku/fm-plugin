@@ -175,8 +175,8 @@ async def request(args, config, model, fm, text, images):
 async def attempt(args, config, model, fm, text, images):
     try:
         return await asyncio.wait_for(request(args, config, model, fm, text, images), timeout=args.timeout)
-    except (fm.FoundationModelsError, OSError, ValueError, TypeError, TimeoutError) as error:
-        message = f"Request exceeded {args.timeout:g} seconds" if isinstance(error, TimeoutError) else str(error)
+    except (fm.FoundationModelsError, OSError, ValueError, TypeError, asyncio.TimeoutError) as error:
+        message = f"Request exceeded {args.timeout:g} seconds" if isinstance(error, (TimeoutError, asyncio.TimeoutError)) else str(error)
         return failure(type(error).__name__, message)
 
 
