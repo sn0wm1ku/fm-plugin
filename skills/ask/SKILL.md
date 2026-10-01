@@ -1,6 +1,6 @@
 ---
 name: ask
-description: Run tasks with Apple's on-device Foundation Model (fm). YOU, the host assistant, must supply any tools FM needs. Call the plugin's fm_start with the prompt and selected host tool definitions. Execute its returned tool requests through your own authorized tools, then submit real results with fm_continue until complete. FM receives only tools you explicitly supply. Use tools=[] for self-contained tasks. Read this skill for setup, tool discovery, and advanced SDK features.
+description: Run tasks with Apple's on-device Foundation Model (fm). YOU, the host LLM, prepare the task context and handle tools. Assemble relevant conversation, source material, facts, constraints and output requirements into a self-contained prompt. Supply that context and selected host tool definitions to fm_start for each execution. Execute FM's tool requests through your authorized tools and return real results with fm_continue. Check the final answer against the original task. Use tools=[] when the supplied context is sufficient.
 argument-hint: "<task or prompt>"
 ---
 
@@ -14,11 +14,16 @@ the helper elsewhere. Both Codex and Claude Code use this same implementation.
 Resolve `fm_setup.py` and `fm_bridge.py` in that same `scripts/` directory.
 For text tasks and host tool access, prefer the plugin's callable MCP bridge
 described below. The shell helper remains available for advanced SDK features.
+The host LLM owns context preparation, tool selection and execution, and final
+verification. Prepare a self-contained task from the full relevant conversation;
+pass its source material and facts in `prompt`, and its constraints and output
+requirements in `instructions`. Supply tool definitions in `fm_start.tools` for
+each execution. FM works from this explicitly supplied context and tool set.
 
 1. Understand the outcome in the full conversation. Include relevant source
    material, confirmed facts, constraints, and the required output format. Keep
    unrelated chat history, credentials, and repositories out of the prompt.
-   **Choose the data route before calling `respond`:** supplied text is enough
+   **Choose the data route before starting FM:** supplied text is enough
    for translation or summarization. Current facts or private records (weather,
    news, prices, email) need source data. When those data have not been supplied,
    discover relevant host tools and follow **Callable bridge tools** below.

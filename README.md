@@ -128,6 +128,12 @@ such as dates, prices, and news, verify against a current source.
 
 ## Callable bridge tools
 
+The host LLM prepares the context and handles tools. It assembles the relevant
+conversation, authorized sources, facts, constraints and output requirements
+into a self-contained task, then supplies that context and selected tool
+definitions to `fm_start` for each execution. It executes FM's tool requests,
+returns real results through `fm_continue`, and verifies the final answer.
+
 For ordinary text tasks and host tools, the plugin exposes these MCP tools in
 both clients:
 
