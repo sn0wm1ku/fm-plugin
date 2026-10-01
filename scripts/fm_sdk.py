@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import importlib
 import importlib.metadata
+import inspect
 import json
 import math
 import multiprocessing
@@ -26,8 +27,13 @@ def emit(value, stream=sys.stdout):
 def parser():
     cli = argparse.ArgumentParser(description=__doc__)
     commands = cli.add_subparsers(dest="command", required=True)
-    for command in ("available", "tokens", "respond", "batch"):
+    for command in ("available", "tools", "tokens", "respond", "batch"):
         sub = commands.add_parser(command)
+        if command == "tools":
+            sub.add_argument("--extension", type=Path, required=True,
+                             help="Inspect the tools exported by this trusted Python file")
+            sub.set_defaults(schema=None, instructions=None, instructions_file=None)
+            continue
         sub.add_argument("--use-case", choices=("general", "content-tagging"), default="general")
         sub.add_argument("--guardrails", choices=("default", "permissive-transformations"), default="default")
         if command == "available":
@@ -95,11 +101,21 @@ def save_transcript(path, data):
 
 def configuration(args, fm):
     extension = runpy.run_path(str(args.extension.resolve())) if args.extension else {}
+    if args.extension and not {"create_tools", "Output"}.intersection(extension):
+        return failure("InvalidExtension", "Extension must export create_tools() and/or an @fm.generable Output type")
+    if "create_tools" in extension and (not callable(extension["create_tools"]) or inspect.iscoroutinefunction(extension["create_tools"])):
+        return failure("InvalidExtension", "create_tools must be a synchronous callable returning a list of tools")
     tools = extension["create_tools"]() if "create_tools" in extension else []
     if not isinstance(tools, list) or not all(isinstance(tool, fm.Tool) for tool in tools):
         return failure("InvalidExtension", "create_tools() must return a list of fm.Tool instances")
+    if any(not isinstance(tool.name, str) or not tool.name.strip()
+           or not isinstance(tool.description, str) or not tool.description.strip() for tool in tools):
+        return failure("InvalidExtension", "Every tool needs a non-empty name and description")
+    names = [tool.name for tool in tools]
+    if len(names) != len(set(names)):
+        return failure("InvalidExtension", "Tool names must be unique within a session")
     output = extension.get("Output")
-    if output is not None and not isinstance(output, fm.Generable):
+    if "Output" in extension and not isinstance(output, fm.Generable):
         return failure("InvalidExtension", "Output must be an @fm.generable type")
     if args.schema and output is not None:
         return failure("InvalidInput", "Choose either --schema or extension Output")
@@ -202,6 +218,17 @@ async def batch(args, config, model, fm):
 
 
 async def dispatch(args, fm):
+    if args.command == "tools":
+        config = configuration(args, fm)
+        if not config["ok"]:
+            emit(config)
+            return 2
+        if not config["tools"]:
+            emit(failure("InvalidExtension", "Tool inspection requires create_tools() to return at least one tool"))
+            return 2
+        emit({"ok": True, "tools": [{"name": tool.name, "description": tool.description,
+              "arguments_schema": tool.arguments_schema.to_dict()} for tool in config["tools"]]})
+        return 0
     model = fm.SystemLanguageModel(
         use_case=fm.SystemLanguageModelUseCase.CONTENT_TAGGING if args.use_case == "content-tagging" else fm.SystemLanguageModelUseCase.GENERAL,
         guardrails=fm.SystemLanguageModelGuardrails.PERMISSIVE_CONTENT_TRANSFORMATIONS if args.guardrails == "permissive-transformations" else fm.SystemLanguageModelGuardrails.DEFAULT)

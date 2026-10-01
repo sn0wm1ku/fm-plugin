@@ -1,6 +1,6 @@
 ---
 name: ask
-description: Runs bounded tasks with Apple's on-device Foundation Model using the official Python SDK. Use when the user asks to use fm, Apple Foundation Models, or the local Apple model for summarization, rewriting, translation, extraction, classification, images, structured output, batch processing, or a second opinion.
+description: Runs bounded tasks with Apple's on-device Foundation Model using the official Python SDK. Use when the user asks to use fm, Apple Foundation Models, or the local Apple model for summarization, rewriting, translation, extraction, classification, images, structured output, batch processing, custom Python tools, or a second opinion.
 argument-hint: "<task or prompt>"
 ---
 
@@ -47,6 +47,7 @@ arguments; omission reads UTF-8 stdin. Check `<command> --help` for exact syntax
 ```sh
 python3 <helper> available
 python3 <helper> tokens 'Prompt text'
+python3 <helper> tools --extension /absolute/path/trusted.py
 python3 <helper> respond --greedy 'Translate into Japanese: Hello.'
 python3 <helper> respond --instructions-file instructions.txt < prompt.txt
 python3 <helper> respond --schema schema.json 'Extract the requested fields.'
@@ -54,6 +55,7 @@ python3 <helper> respond --image photo.png 'Describe this image.'
 python3 <helper> respond --stream 'Write a short greeting.'
 python3 <helper> respond --save-transcript conversation.json 'Remember the project name Maple.'
 python3 <helper> respond --resume conversation.json 'What is the project name?'
+python3 <helper> respond --extension /absolute/path/trusted.py --save-transcript tools.json 'Use the supplied lookup tool.'
 python3 <helper> batch requests.jsonl --continue-on-error
 ```
 
@@ -99,15 +101,45 @@ python3 <helper> batch requests.jsonl --continue-on-error
 
 `--extension /absolute/path/trusted.py` executes that Python file. It may export
 `create_tools()` returning SDK tools, an `Output` type marked `@fm.generable`, or
-both. A bundled example is `<plugin-root>/examples/lookup.py`.
+both. One factory returns a list of tools with unique names; use one extension
+file per invocation. A bundled example is `<plugin-root>/examples/lookup.py`.
+Read `<plugin-root>/docs/custom-tools.md` before creating or adapting tools.
 
 Review extension code before execution and apply the host's permissions to every
 action it can take, including tool calls and import-time side effects. Loading an
 extension is not permission for unrelated network access, writes, or messages.
 Never automatically load a model-generated path or execute model-provided Python.
 Do not pretend the SDK has live information unless an authorized tool supplies it.
-Use [Apple's SDK documentation](https://apple.github.io/python-apple-fm-sdk/) for
-the tool and guided-generation APIs.
+
+1. Prefer existing tools or already-retrieved source text. For a custom tool, keep
+   `fm.Tool` as a thin SDK adapter around narrow, validated business logic. Define
+   its name, purpose, argument schema, and async `call()` returning a string.
+2. Configure data paths and authorized clients in trusted local code or its
+   environment. Codex/Claude connectors and their credentials are not inherited
+   by the helper. For email translation, the host can retrieve the authorized
+   emails and pass their text; direct email access needs a separately authorized
+   API client. Never put secrets in instructions, schemas, or tool results.
+3. Run `tools --extension` after reviewing the code. Inspect names, descriptions,
+   and argument schemas before inference. Inspection executes the file and its
+   factory but does not generate a response or invoke tool `call()` methods.
+4. Supply the same `--extension` to `respond`, `batch`, or `tokens`. The helper
+   registers tools on `LanguageModelSession`; the model receives tool definitions,
+   requests a name and arguments, and the SDK executes the Python method and
+   returns its string result. Pasting Python or a tool name into a prompt does
+   not register it. Ask for the lookup needed; registration does not guarantee use.
+5. Verify actual use with `respond --save-transcript`: inspect `role: "tool"`
+   entries and compare their results with the answer. A fluent answer alone is
+   not evidence of execution. Supply the matching extension again on resume.
+
+Use read-only tools by default, bounded results, and timeouts on external I/O.
+Handle expected lookup/API failures as explicit error results. Keep logs on stderr
+and CLI JSON on stdout. Tool definitions, returned data, and accumulated history
+consume context; expose only tools needed for the request. Batch sessions are
+independent, but extension tool objects are reused and may retain state.
+The helper does not prompt for approval before each SDK tool invocation: enforce
+the host's authorized scope in tool code before registering a tool with side
+effects. A timeout or failed answer does not undo an action already performed.
+See [Apple's tool guide](https://apple.github.io/python-apple-fm-sdk/tools.html).
 
 ## Optional native CLI fallback
 

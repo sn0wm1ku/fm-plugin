@@ -5,7 +5,7 @@
   "plugins": [
     {
       "name": "fm",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "description": "Use Apple's on-device Foundation Model through the official Python SDK.",
       "source": "./"
     }

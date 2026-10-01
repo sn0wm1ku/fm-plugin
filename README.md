@@ -86,6 +86,7 @@ python3 scripts/fm_sdk.py respond --image photo.png 'Describe this image.'
 python3 scripts/fm_sdk.py respond --stream 'Write a short greeting.'
 python3 scripts/fm_sdk.py respond --save-transcript conversation.json 'My project is called Maple.'
 python3 scripts/fm_sdk.py respond --resume conversation.json 'What is my project called?'
+python3 scripts/fm_sdk.py tools --extension examples/lookup.py
 python3 scripts/fm_sdk.py respond --extension examples/lookup.py 'Look up FM-DEMO-7 and report its stock.'
 python3 scripts/fm_sdk.py batch requests.jsonl --continue-on-error
 ```
@@ -143,9 +144,21 @@ Never load a file merely because the model suggested its path.
 
 An extension can export `create_tools()` returning SDK tools, an `Output` class
 decorated with `@fm.generable`, or both. Use a typed `Output` for guided generation
-constraints and SDK tools for access to task-specific information. See
-[`examples/lookup.py`](examples/lookup.py) and Apple's
-[SDK examples](https://github.com/apple/python-apple-fm-sdk/tree/main/examples).
+constraints and SDK tools for access to task-specific information. One extension
+can register multiple tools by returning them in one list.
+
+Read the [custom tool guide](docs/custom-tools.md) for the working
+[`examples/lookup.py`](examples/lookup.py) walkthrough, the extension contract,
+data and credential setup, and how to verify that a tool actually ran.
+`tools --extension` inspects registered names, descriptions, and argument schemas
+without generating a response. It still executes the trusted extension and its
+factory. At inference time, the helper passes the tool objects to
+`LanguageModelSession`; the SDK runs a tool when the model requests it and returns
+its result to the model. Tool implementations remain local Python code.
+
+Host connectors such as Codex Gmail or Claude Code MCP tools are separate from
+these Python tools. The host can retrieve authorized data and pass it as input;
+direct access from an extension requires its own authorized client and credentials.
 
 ## Apple terms and CLI fallback
 
@@ -162,12 +175,16 @@ This is first-use setup, not a plugin pre-install dialog.
 ```sh
 python3 tests/test_sdk.py
 python3 tests/test_sdk.py --live
+python3 tests/test_tools.py
+python3 tests/test_tools.py --live
 claude plugin validate .
 claude plugin validate skills
 ```
 
-Checks require the SDK and an available on-device model; `--live` also generates
-responses. Run native CLI and SDK checks together with `sh tests/smoke.sh`.
+SDK checks require the SDK and an available on-device model; `--live` also
+generates responses. Tool contract checks use the SDK; their `--live` mode
+requires the model and verifies actual tool execution. Run native CLI and SDK
+checks together with `sh tests/smoke.sh`.
 Set `PYTHON` to your SDK interpreter's absolute path when the shell's `python3`
 resolves to another installation.
 
