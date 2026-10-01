@@ -1,0 +1,11 @@
+{
+  "title": "ExtractedPerson",
+  "type": "object",
+  "properties": {
+    "name": {"type": "string", "description": "The person's name from the supplied text"},
+    "city": {"type": "string", "description": "The city from the supplied text"}
+  },
+  "required": ["name", "city"],
+  "x-order": ["name", "city"],
+  "additionalProperties": false
+}
