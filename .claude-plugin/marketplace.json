@@ -1,0 +1,13 @@
+{
+  "name": "apple-fm",
+  "description": "Apple Foundation Models integration for Codex and Claude Code.",
+  "owner": { "name": "sn0wm1ku" },
+  "plugins": [
+    {
+      "name": "fm",
+      "version": "0.2.0",
+      "description": "Use Apple's on-device Foundation Model through the native fm CLI.",
+      "source": "./"
+    }
+  ]
+}

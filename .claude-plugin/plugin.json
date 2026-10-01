@@ -1,0 +1,8 @@
+{
+  "name": "fm",
+  "version": "0.2.0",
+  "description": "Use Apple's on-device Foundation Model through the native fm CLI.",
+  "author": { "name": "sn0wm1ku" },
+  "repository": "https://github.com/sn0wm1ku/fm-plugin",
+  "license": "MIT"
+}
