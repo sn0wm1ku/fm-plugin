@@ -24,24 +24,43 @@ through another paid LLM. Overall token/cost savings have not been measured.
 
 ## Runtime and setup gate
 
+Marketplace installation is the user entry point. Run setup helpers yourself;
+do not ask users to run Python setup or plugin installer commands.
+
 Use the approved Python recorded in `~/.local/share/fm-plugin/setup.json` when
-available; the shell's default Python may have different packages. Run
-`python3 <plugin-root>/scripts/fm_setup.py status` with that interpreter.
+available; the shell's default Python may have different packages. Verify that
+the interpreter exists and supports Python 3.10+. If it is missing or too old,
+discover an existing compatible interpreter first. If none is available, verify
+an installation method for this machine, explain the exact installation scope,
+ask permission, and install only after approval. Recheck the interpreter.
+Run `<python> <plugin-root>/scripts/fm_setup.py status` with that interpreter.
 Runtime prerequisites and the current terms agreement must pass before
-inference, extensions, or tool callbacks. Stop and report a failed gate.
+inference, extensions, or tool callbacks. A failed gate pauses inference while
+you offer setup or repair; it does not end the setup flow automatically.
 
 For first setup or a failed status, follow
 `<plugin-root>/README.md#set-up-and-install`:
 
-- Run `fm_setup.py check`; Python 3.10+, `apple-fm-sdk==0.2.1`,
-  `mcp==2.2.0`, compatible macOS/hardware, Apple Intelligence, Xcode agreements,
-  and the native FM CLI must be available. Ask before installing dependencies.
+- Run `fm_setup.py check` and inspect each failed check's `remediation`.
+  Python 3.10+, `apple-fm-sdk==0.2.1`, `mcp==2.2.0`, compatible macOS/hardware,
+  Apple Intelligence, Xcode agreements, and the native FM CLI must be available.
+- For failed SDK or MCP checks, show the exact interpreter, pinned packages,
+  and returned installation commands and ask permission. After approval, run
+  those `remediation.argv` commands yourself with safe argument handling. Only
+  repair failed dependencies; do not install packages when their checks pass.
+  If installation fails, report the actual error and offer a verified remedy;
+  do not bypass environment protections or silently switch interpreters.
+- Rerun `check` after installation. For platform settings or agreements that
+  require human action, explain the returned remediation and wait for it to be
+  completed. On rejection, stop. Continue to terms only when prerequisites pass.
 - Run `fm_setup.py terms`. Display its full actual terms and ask the human
   **Agree or Reject**. Never infer consent from this invocation or a model reply.
 - If native acceptance is pending, the human runs `sudo fm license` and answers
   Apple's prompt. Never pipe acceptance or do it for them.
 - On actual agreement, use `fm_setup.py accept --terms-sha256 HASH --user-agreed`
-  with the displayed hash, then recheck status. On rejection, run
+  with the displayed hash, then recheck status. Restart the client's FM MCP
+  connection after dependency repair so it uses the approved environment.
+  Resume the original task only after status passes. On rejection, run
   `fm_setup.py reject` and stop. Changed terms require a new human decision.
 
 A valid receipt can be reused while status verifies its current hash and

@@ -7,6 +7,20 @@
   "license": "MIT",
   "skills": "./skills/",
   "mcpServers": "./.codex-plugin/mcp.json",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${PLUGIN_ROOT}/scripts/fm_setup_hook.sh\" codex",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  },
   "interface": {
     "displayName": "Apple Foundation Models",
     "shortDescription": "Lend host tools to FM through program callbacks",

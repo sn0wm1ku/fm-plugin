@@ -5,5 +5,19 @@
   "author": { "name": "sn0wm1ku" },
   "repository": "https://github.com/sn0wm1ku/fm-plugin",
   "mcpServers": "./.claude-plugin/mcp.json",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/fm_setup_hook.sh\" claude",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  },
   "license": "MIT"
 }

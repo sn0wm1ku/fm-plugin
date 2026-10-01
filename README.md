@@ -22,17 +22,10 @@ The SDK's minimum is macOS 26; this plugin's setup additionally checks that the
 native CLI is actually available. Its presence is verified on the machine rather
 than assumed from the SDK's OS requirement.
 
-In the commands below, `python3` must resolve to your chosen Python 3.10+
-interpreter. Activate its virtual environment first if you use one, and install
-the SDK with that same interpreter:
-
-```sh
-python3 -m pip install apple-fm-sdk==0.2.1 mcp==2.2.0
-```
-
-The shared skill checks prerequisites and terms before use. Missing dependencies
-are reported with setup choices; packages and Apple terms are never installed or
-accepted silently. Python **3.10 is supported**, not just versions newer than it.
+Install the plugin from the marketplace first. On first use, the shared `ask`
+skill checks these requirements and offers to install missing dependencies with
+your permission. You do not need to run Python setup commands yourself. Python
+**3.10 is supported**, not just versions newer than it.
 
 Generation runs on-device. Your surrounding Codex or Claude Code session retains
 its normal billing and data handling, including text passed to or returned from
@@ -40,48 +33,9 @@ the local model. Python tools you provide can access external services or files.
 
 ## Set up and install
 
-For installation that checks prerequisites and acceptance before copying the
-plugin, run these from a reviewed checkout of this repository:
-
-```sh
-python3 scripts/fm_setup.py check
-python3 scripts/fm_setup.py terms
-```
-
-Resolve any missing prerequisites first, using the intended Python interpreter.
-The skill offers installation choices and obtains permission before installing
-dependencies. macOS, Xcode, and Apple Intelligence setup may require user action.
-After those checks pass, read the **full actual terms** returned by `terms` and
-choose Agree or Reject. If Apple's native agreement is pending, run
-`sudo fm license` yourself and answer its prompt. The assistant cannot accept it
-for you. Native acceptance is checked with `fm license --status`.
-
-Only after the user actually agrees, record the exact displayed terms using the
-returned hash (replace `<displayed-terms-sha256>`):
-
-```sh
-python3 scripts/fm_setup.py accept --terms-sha256 <displayed-terms-sha256> --user-agreed
-python3 scripts/fm_setup.py status
-python3 scripts/install.py --client codex
-python3 scripts/install.py --client claude
-```
-
-Run only the installer for the client you want. It registers the local marketplace
-and installs after the gate succeeds. `--plugin-id fm@marketplace` can select the
-matching marketplace identity. To reject instead, run
-`python3 scripts/fm_setup.py reject`; installation and use stop.
-
-The receipt is per user and records the Python interpreter. Runtime checks
-recheck prerequisites, current terms, and acceptance, so a receipt does not hide
-a removed dependency. Gate failures return `ok: false`, `installation: "failed"`,
-specific errors, and a nonzero exit status. `available` remains a diagnostic
-command; it does not establish that the installation gate passed.
-
-### Native marketplace installation
-
-The commands below use the client's marketplace UI/CLI. Those clients may copy
-the plugin cache before the shared skill runs: this route enforces the gate on
-first use, rather than vetoing the marketplace's initial file copy.
+Add this repository in your client's marketplace UI, or use the commands below.
+The marketplace installs the bundle; the `ask` skill handles runtime setup on
+first use.
 
 ### Codex
 
@@ -106,6 +60,28 @@ Or inside Claude Code:
 
 Start a new session after installation. The same `ask` skill handles setup and
 requests in both clients; no separate setup skill is required.
+
+Both plugin manifests register a `SessionStart` prerequisite check using the same
+shell helper. Codex resolves it through `PLUGIN_ROOT`; Claude Code uses
+`CLAUDE_PLUGIN_ROOT`. In Codex, review and trust the plugin's hooks before they
+run. The hook reports missing requirements to the assistant; the `ask` skill
+handles installation permission and repair. It runs on session startup or resume,
+after marketplace installation, and stays quiet when setup passes.
+
+On first use, the assistant checks the runtime, explains any missing requirements,
+and asks permission before installing Python or the required Python packages.
+After permission, it runs the installation and checks again. macOS updates,
+Xcode setup, and enabling Apple Intelligence may require your action.
+
+The assistant displays Apple's full current terms and asks you to choose Agree
+or Reject. If native acceptance is pending, you run `sudo fm license` yourself
+and answer Apple's prompt. The assistant records your decision and verifies setup
+before running a task. It reuses a valid receipt and rechecks prerequisites and
+current terms on later uses.
+
+For development workflows that check setup before copying the plugin,
+`scripts/install.py --client codex|claude` remains available. The shared skill
+runs the setup helpers for marketplace users.
 
 Keep one active installation of `fm` per client. When migrating from the local
 development marketplace `fm-local` to GitHub's `apple-fm`, disable the old copy
@@ -276,6 +252,7 @@ python3 tests/test_sdk.py --live
 python3 tests/test_tools.py
 python3 tests/test_tools.py --live
 python3 tests/test_setup.py
+python3 tests/test_setup_hook.py
 python3 tests/test_install.py
 python3 tests/test_bridge.py
 python3 tests/test_bridge.py --live
